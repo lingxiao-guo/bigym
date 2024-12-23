@@ -349,6 +349,7 @@ class ActBCAgent(BC):
                 extract_from_spec(obs, "low_dim_state")
             )
             qpos = qpos.detach()
+            qpos[:, 30:60] = 0 # mask qvel
 
         if self.use_pixels:
             rgb = flatten_time_dim_into_channel_dim(
@@ -385,12 +386,17 @@ class ActBCAgent(BC):
 
         actions = batch["action"]
         reward = batch["reward"]
-
+        # accelerate action First
+        # action_qpos = actions[:,::2, 4:]
+        # action_float_base = actions[:,::2,:4]+actions[:,1::2,:4]
+        # actions = torch.cat([action_float_base,action_qpos],dim=-1)
         if self.low_dim_size > 0:
             obs = flatten_time_dim_into_channel_dim(
                 extract_from_batch(batch, "low_dim_state")
             )
             qpos = obs.detach()
+            qpos[:, 30:60] = 0 # mask qvel
+            
 
         rgb = flatten_time_dim_into_channel_dim(
             # Don't get "tp1" obs
@@ -408,7 +414,7 @@ class ActBCAgent(BC):
                 extract_from_spec(batch, "lang_tokens")
             )
             task_emb, _ = self.encode_clip_text(lang_tokens)
-
+        
         # If action contains all zeros, it is padded.
         is_pad = actions.sum(axis=-1) == 0
         loss_dict = self.actor(

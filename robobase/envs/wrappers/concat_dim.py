@@ -66,7 +66,7 @@ class ConcatDim(gym.ObservationWrapper, gym.utils.RecordConstructorArgs):
                     v = (v - self._obs_stats["mean"][k]) / self._obs_stats["std"][k]
                 combined.append(v)
             else:
-                new_obs[k] = v
+                new_obs[k] = v            
         new_obs[self._new_name] = np.concatenate(combined, dim)
         return new_obs
 

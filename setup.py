@@ -28,7 +28,7 @@ core_requirements = [
     "hydra-core",
     "hydra-joblib-launcher",
     # Fix for solver_iter before 1.0.0
-    "gymnasium @ git+https://git@github.com/stepjam/Gymnasium.git@0.29.2",
+    "gymnasium @ git+ssh://git@github.com/stepjam/Gymnasium.git@0.29.2",
     "wandb<=0.15.12",
     "termcolor",
     "opencv-python-headless",
@@ -51,18 +51,18 @@ setuptools.setup(
         "": [str(p.resolve()) for p in Path("robobase/cfgs/").glob("**/*.yaml")]
     },
     extras_require={
-        "dev": ["pre-commit", "pytest", "mvp @ git+https://github.com/ir413/mvp"],
+        "dev": ["pre-commit", "pytest", "mvp @ git+ssh://git@github.com/ir413/mvp"],
         "dmc": [
             "dm_control",
         ],
         "rlbench": [
-            "rlbench @ git+https://git@github.com/stepjam/RLBench.git@b80e51feb3694d9959cb8c0408cd385001b01382",
+            "rlbench @ git+ssh://git@github.com/stepjam/RLBench.git@b80e51feb3694d9959cb8c0408cd385001b01382",
         ],
         "bigym": [
-            "bigym @ git+https://github.com/chernyadev/bigym.git",
+            "bigym @ git+ssh://git@github.com/chernyadev/bigym.git",
         ],
         "d4rl": [
-            "d4rl @ git+https://github.com/Farama-Foundation/d4rl@master#egg=d4rl",
+            "d4rl @ git+ssh://git@github.com/Farama-Foundation/d4rl@master#egg=d4rl",
             "gym",
             "cython<3",
         ],
