@@ -1,6 +1,8 @@
 import shutil
 import signal
 import sys
+import os
+import json
 import time
 import random
 from typing import Callable, Any
@@ -59,7 +61,8 @@ def _create_default_replay_buffer(
         save_dir=cfg.replay.save_dir,
         batch_size=cfg.batch_size if not demo_replay else cfg.demo_batch_size,
         replay_capacity=cfg.replay.size if not demo_replay else cfg.replay.demo_size,
-        action_shape=action_space.shape,
+        # action_shape=action_space.shape,
+        action_shape=(action_space.shape[0],action_space.shape[1]),
         action_dtype=action_space.dtype,
         reward_shape=(),
         reward_dtype=np.float32,
@@ -92,6 +95,9 @@ def _create_default_envs(cfg: DictConfig) -> EnvFactory:
         ValueError()
     return factory
 
+def set_seed(seed):
+    torch.manual_seed(seed)
+    np.random.seed(seed)
 
 class Workspace:
     def __init__(
@@ -167,7 +173,7 @@ class Workspace:
             logging.warning("Train env is not created. Training will not be supported ")
 
         # Create evaluation environment
-        self.eval_env = self.env_factory.make_eval_env(cfg)
+        self.eval_env = self.env_factory.make_eval_env(cfg, self.work_dir)
 
         if num_demos != 0:
             # Post-process demos using the information from environments
@@ -329,6 +335,7 @@ class Workspace:
         self.shutdown()
 
     def eval(self) -> dict[str, Any]:
+        set_seed(1000)
         return self._eval(eval_record_all_episode=True)
 
     def _eval(self, eval_record_all_episode: bool = False) -> dict[str, Any]:
@@ -338,13 +345,17 @@ class Workspace:
         eval_until_episode = utils.Until(self.cfg.num_eval_episodes)
         first_rollout = []
         metrics = {}
+        episode_len = []
+        seeds = np.arange(0, self.cfg.num_eval_episodes)
+        rollout_id = 0
         while eval_until_episode(episode):
-            observation, info = self.eval_env.reset()
+            observation, info = self.eval_env.reset(seed=10) #+int(seeds[rollout_id]))
             # eval agent always has last id (ids start from 0)
             self.agent.reset(self.main_loop_iterations, [self.train_envs.num_envs])
             enabled = eval_record_all_episode or episode == 0
             self.eval_video_recorder.init(self.eval_env, enabled=enabled)
             termination, truncation = False, False
+            t = 0
             while not (termination or truncation):
                 (
                     action,
@@ -363,10 +374,16 @@ class Workspace:
                 self.eval_video_recorder.record(self.eval_env)
                 total_reward += reward
                 step += 1
+                t += 1
             if episode == 0:
                 first_rollout = np.array(self.eval_video_recorder.frames)
             self.eval_video_recorder.save(f"{self.global_env_steps}.mp4")
             success = info.get("task_success")
+            if success:
+                episode_len.append(t)
+            if enabled:
+                print(f"Rollout{rollout_id}, Success: {success}, Length:{t}")
+            rollout_id += 1
             if success is not None:
                 successes += np.array(success).astype(int).item()
             else:
@@ -383,6 +400,27 @@ class Workspace:
         if self.cfg.log_eval_video and len(first_rollout) > 0:
             metrics["eval_rollout"] = dict(video=first_rollout, fps=4)
         self.agent.set_eval_env_running(False)
+        avg_length = np.mean(episode_len) if len(episode_len)>0 else 0
+        new_metrics = {
+            "episode_success": successes / episode,  # 默认值为 0
+            "episode_len": avg_length,  # 默认值为 0
+        }
+        print("Success rate: ",successes / episode,"episode_length: ", avg_length )
+        # 1. 检查文件是否存在
+        file_path = self.work_dir /'metrics.txt'
+        if os.path.exists(file_path):
+        #     # 2. 如果文件存在，先读取文件内容
+            with open(file_path, 'r') as f:
+                existing_data = json.load(f)  # 读取现有的 JSON 数据
+        else:
+            existing_data = []  # 如果文件不存在，创建一个空列表
+
+        # 3. 将新的 metrics 数据追加到现有内容
+        existing_data.append(new_metrics)
+        
+        # 4. 写入文件（追加）
+        with open(file_path, 'w') as f:
+            json.dump(existing_data, f, indent=4)
         return metrics
 
     def _add_to_replay(
@@ -589,6 +627,8 @@ class Workspace:
             pre_train_until_step = utils.Until(self.cfg.num_pretrain_steps)
             should_pretrain_log = utils.Every(self.cfg.log_pretrain_every)
             should_pretrain_eval = utils.Every(self.cfg.eval_every_steps)
+            snapshot_every_n = self.cfg.snapshot_every_n if self.cfg.save_snapshot else 0
+            should_save_snapshot = utils.Every(snapshot_every_n)
             if self.cfg.log_pretrain_every > 0:
                 assert self.cfg.num_pretrain_steps % self.cfg.log_pretrain_every == 0
             if len(self.replay_buffer) <= 0:
@@ -616,6 +656,9 @@ class Workspace:
                     self.logger.log_metrics(
                         eval_metrics, self.pretrain_steps, prefix="pretrain_eval"
                     )
+                
+                if should_save_snapshot(self._pretrain_step):
+                    self.save_snapshot()
 
                 self._pretrain_step += 1
 

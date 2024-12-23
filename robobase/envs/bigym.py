@@ -120,7 +120,7 @@ class BiGymEnvFactory(EnvFactory):
         else:
             return env
 
-    def _create_env(self, cfg: DictConfig) -> BiGymEnv:
+    def _create_env(self, cfg: DictConfig, work_dir: str = None,) -> BiGymEnv:
         bigym_class = _task_name_to_env_class(cfg.env.task_name)
         camera_configs = [
             CameraConfig(
@@ -153,6 +153,7 @@ class BiGymEnvFactory(EnvFactory):
                 privileged_information=False if cfg.pixels else True,
             ),
             control_frequency=CONTROL_FREQUENCY_MAX // cfg.env.demo_down_sample_rate,
+            work_dir = work_dir
         )
 
     def make_train_env(self, cfg: DictConfig) -> gym.vector.VectorEnv:
@@ -169,9 +170,9 @@ class BiGymEnvFactory(EnvFactory):
             ],
         )
 
-    def make_eval_env(self, cfg: DictConfig) -> gym.Env:
+    def make_eval_env(self, cfg: DictConfig, work_dir:str) -> gym.Env:
         env, self._action_space, self._observation_space = self._wrap_env(
-            env=self._create_env(cfg),
+            env=self._create_env(cfg, work_dir),
             cfg=cfg,
             demo_env=False,
             train=False,
