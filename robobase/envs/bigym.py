@@ -27,6 +27,7 @@ from demonstrations.utils import Metadata
 
 from typing import List, Dict, Tuple, Callable
 import copy
+from tqdm import tqdm
 
 UNIT_TEST = False
 
@@ -208,17 +209,66 @@ class BiGymEnvFactory(EnvFactory):
 
     def collect_or_fetch_demos(self, cfg: DictConfig, num_demos: int):
         demos = self._get_demo_fn(cfg, num_demos)
+        demos = self.transform_base_action_to_abs(demos)
         self._raw_demos = demos
         self._action_stats = self._compute_action_stats(cfg, demos)
         self._obs_stats = self._compute_obs_stats(cfg, demos)
 
-    def post_collect_or_fetch_demos(self, cfg: DictConfig):
+    def post_collect_or_fetch_demos(self, cfg: DictConfig, work_dir: str):
         demo_list = [demo.timesteps for demo in self._raw_demos]
         demo_list = rescale_demo_actions(
             self._rescale_demo_action_helper, demo_list, cfg
         )
         self._demos = self._demo_to_steps(cfg, demo_list)
+    
+    def plot_data(self,fig_name, qpos, target_qpos, work_dir=None): 
+        import matplotlib.pyplot as plt      
+        qpos = np.array(qpos)
+        target_qpos = np.array(target_qpos)
+        num_dims = qpos.shape[1]  # 获取维度数量
+        timestep = qpos.shape[0]  # 获取时间步数
+        # print(self.action_data.shape)
+        cols = 4  # 每行 4 个子图
+        rows = (num_dims + cols - 1) // cols  # 自动计算行数
 
+        fig, axes = plt.subplots(rows, cols, figsize=(cols * 4, rows * 4)) 
+        axes = axes.flatten()  # 将 2D 子图数组展平成 1D
+        
+        for i in range(num_dims):
+            axes[i].plot(range(timestep), qpos[:, i], label=f"real qpos {i+1}")
+            axes[i].plot(range(timestep), target_qpos[:, i], label=f"target qpos {i+1}")
+            axes[i].set_title(f"Dimension {i+1}")
+            axes[i].set_xlabel("Timestep")
+            axes[i].set_ylabel("Value")
+            axes[i].legend()
+        
+        # 隐藏多余的子图（如果子图数量大于16）
+        for j in range(num_dims, len(axes)):
+            axes[j].axis("off")
+        
+        plt.tight_layout()  # 自动调整子图间距
+        if work_dir is not None:
+            save_dir = work_dir/f'plot'
+            save_dir.mkdir(parents=True, exist_ok=True) 
+            save_path = save_dir / fig_name
+            fig.savefig(save_path)
+        plt.close(fig)
+        
+    def transform_base_action_to_abs(self, demos): #先从demos里画一个曲线验证一下
+        transformed_demos = []
+        print('Transform base action to abs action...')
+        for demo in tqdm(demos):
+            action_list = [timestep.info['demo_action'] for timestep in demo.timesteps]
+            action_data = np.array(action_list)
+            base_obs = [timestep.observation['proprioception_floating_base'] for timestep in demo.timesteps]
+            base_obs = np.array(base_obs)
+            action_data[:,:4] = np.cumsum(action_data[:,:4],axis=0) + base_obs[0]
+            for t in range(len(demo.timesteps)):
+                demo.timesteps[t].info['demo_action'] = action_data[t] 
+            transformed_demos.append(demo)
+        del demos
+        return transformed_demos
+        
     def load_demos_into_replay(self, cfg: DictConfig, buffer, is_demo_buffer):
         """See base class for documentation."""
         assert hasattr(self, "_demos"), (

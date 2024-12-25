@@ -20,7 +20,7 @@ frame_stack: 1
 is_imitation_learning: true
 
 action_repeat: 1
-action_sequence: 16
+action_sequence: 25
 execution_length: 1
 temporal_ensemble: true
 use_standardization: false  # Demo-based standardization for action space
