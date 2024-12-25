@@ -124,11 +124,8 @@ class RecedingHorizonControl(ActionSequence):
         action_idx_reached = 0
         if self.is_demo_env:
             demo_actions = np.array(action)
-        # accelerate
-        action[:,:4] = np.cumsum(action[:,:4],axis=0)+self.get_observation()['proprioception_floating_base']
-        action = action[::2]
         self._action_history[
-            self._cur_step, self._cur_step : self._cur_step + self._sequence_length//2
+            self._cur_step, self._cur_step : self._cur_step + self._sequence_length
         ] = action
         for i, sub_action in enumerate(action):
             if self._temporal_ensemble and self._sequence_length > 1:

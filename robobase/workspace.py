@@ -177,7 +177,7 @@ class Workspace:
 
         if num_demos != 0:
             # Post-process demos using the information from environments
-            self.env_factory.post_collect_or_fetch_demos(cfg)
+            self.env_factory.post_collect_or_fetch_demos(cfg, self.work_dir)
 
         # Create the RL Agent
         observation_space = self.eval_env.observation_space
@@ -345,11 +345,15 @@ class Workspace:
         eval_until_episode = utils.Until(self.cfg.num_eval_episodes)
         first_rollout = []
         metrics = {}
+        best_metrics = {
+            "best_episode_success": 0,  # 默认值为 0
+            "best_episode_len": 0,  # 默认值为 0
+        }
         episode_len = []
         seeds = np.arange(0, self.cfg.num_eval_episodes)
         rollout_id = 0
         while eval_until_episode(episode):
-            observation, info = self.eval_env.reset(seed=10) #+int(seeds[rollout_id]))
+            observation, info = self.eval_env.reset()
             # eval agent always has last id (ids start from 0)
             self.agent.reset(self.main_loop_iterations, [self.train_envs.num_envs])
             enabled = eval_record_all_episode or episode == 0
@@ -405,7 +409,14 @@ class Workspace:
             "episode_success": successes / episode,  # 默认值为 0
             "episode_len": avg_length,  # 默认值为 0
         }
+        if best_metrics['best_episode_success'] < (successes / episode):
+            best_metrics = {
+                "best_episode_success": successes / episode,  # 默认值为 0
+                "best_episode_len": avg_length,  # 默认值为 0
+            }
+            self.save_snapshot(best_ckpt = True)
         print("Success rate: ",successes / episode,"episode_length: ", avg_length )
+        print("Best success rate:",best_metrics["best_episode_success"],"best episode_length",best_metrics["best_episode_len"])
         # 1. 检查文件是否存在
         file_path = self.work_dir /'metrics.txt'
         if os.path.exists(file_path):
@@ -417,11 +428,62 @@ class Workspace:
 
         # 3. 将新的 metrics 数据追加到现有内容
         existing_data.append(new_metrics)
-        
+        existing_data.append(best_metrics)
         # 4. 写入文件（追加）
         with open(file_path, 'w') as f:
             json.dump(existing_data, f, indent=4)
         return metrics
+    
+    def label(self, demos) -> dict[str, Any]:
+        # demos: List[List]
+        self.agent.set_eval_env_running(True)
+        step, episode, total_reward, successes = 0, 0, 0, 0
+        eval_until_episode = utils.Until(len(demos))
+        first_rollout = []
+        episode_len = []
+        rollout_id = 0
+        entropy = []
+        while eval_until_episode(episode):
+            demo = demos[episode]
+            observation, info = demo[0] # self.eval_env.reset()
+            # eval agent always has last id (ids start from 0)
+            self.agent.reset(self.main_loop_iterations, [self.train_envs.num_envs])
+            enabled = eval_record_all_episode or episode == 0
+            self.eval_video_recorder.init(self.eval_env, enabled=enabled)
+            termination, truncation = False, False
+            t = 0
+            while not (termination or truncation):
+                (
+                    action,
+                    (next_observation, reward, termination, truncation, next_info),
+                    env_metrics,
+                ) = self._perform_env_steps(observation, self.eval_env, True)
+                observation = next_observation
+                info = next_info
+                # Below is testing a feature wich can be enforced in v6.
+                # The ability will allow agent info to be passed to envirionments.
+                # This will be habdy for rednering any auxiliary outputs.
+                if "agent_act_info" in env_metrics:
+                    if hasattr(self.eval_env, "give_agent_info"):
+                        self.eval_env.give_agent_info(env_metrics["agent_act_info"])
+                self.eval_video_recorder.record(self.eval_env)
+                total_reward += reward
+                step += 1
+                t += 1
+            if episode == 0:
+                first_rollout = np.array(self.eval_video_recorder.frames)
+            self.eval_video_recorder.save(f"{self.global_env_steps}.mp4")
+            success = info.get("task_success")
+            if success:
+                episode_len.append(t)
+            if enabled:
+                print(f"Rollout{rollout_id}, Success: {success}, Length:{t}")
+            rollout_id += 1
+            if success is not None:
+                successes += np.array(success).astype(int).item()
+            else:
+                successes = None
+            episode += 1
 
     def _add_to_replay(
         self,
@@ -535,7 +597,6 @@ class Workspace:
                 self.env_factory.load_demos_into_replay(
                     self.cfg, self.demo_replay_buffer, is_demo_buffer=True
                 )
-
         if self.cfg.replay_size_before_train > 0:
             diff = self.cfg.replay_size_before_train - len(self.replay_buffer)
             if num_demos > 0 and diff > 0:
@@ -757,8 +818,10 @@ class Workspace:
         if self.use_demo_replay:
             self.demo_replay_buffer.shutdown()
 
-    def save_snapshot(self):
+    def save_snapshot(self, best_ckpt=False):
         snapshot = self.work_dir / "snapshots" / f"{self.global_env_steps}_snapshot.pt"
+        if best_ckpt:
+            snapshot = self.work_dir / "snapshots" / f"best_snapshot.pt"
         snapshot.parent.mkdir(parents=True, exist_ok=True)
         keys_to_save = [
             "_pretrain_step",
