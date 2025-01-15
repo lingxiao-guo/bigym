@@ -269,13 +269,12 @@ class BiGymEnvFactory(EnvFactory):
         del demos
         return transformed_demos
         
-    def load_demos_into_replay(self, cfg: DictConfig, buffer, is_demo_buffer):
+    def load_demos_into_replay(self, cfg: DictConfig, buffer, is_demo_buffer, labels = None):
         """See base class for documentation."""
         assert hasattr(self, "_demos"), (
             "There's no _demo attribute inside the factory, "
             "Check `collect_or_fetch_demos` is called before calling this method."
         )
-        
         if is_demo_buffer:
             # Filter successful demonstrations
             demos = []
@@ -288,7 +287,10 @@ class BiGymEnvFactory(EnvFactory):
                     continue
         else:
             demos = self._demos
-
+        # check labels and demos match
+        if is_demo_buffer and labels is not None:
+            for i in range(len(demos)):
+                assert len(labels[i]) == len(demos[i])
         demo_env = self._wrap_env(
             DemoEnv(
                 copy.deepcopy(demos), self._action_space, self._observation_space

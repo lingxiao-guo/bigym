@@ -169,8 +169,8 @@ class MultiViewTransformerEncoderDecoderACT(FusionModule):
         self.additional_pos_embed = nn.Embedding(
             3 if self.use_lang_cond else 2, hidden_dim
         )  # learned position embedding for proprio, latent and optionally text
-
         self.kl_weight = kl_weight
+        self.normal_samples = None
 
     @property
     def output_shape(self) -> Tuple[int, int, int]:
@@ -291,6 +291,69 @@ class MultiViewTransformerEncoderDecoderACT(FusionModule):
         is_pad_hat = self.is_pad_head(hs)
 
         return a_hat, is_pad_hat, [mu, logvar]
+    
+    def sample(
+        self,
+        x: Tuple[torch.Tensor, torch.Tensor],
+        qpos: torch.Tensor,
+        actions: torch.Tensor = None,
+        num_samples: int = 50,
+        is_pad: torch.Tensor = None,
+        task_emb: torch.Tensor = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]]:
+        """
+        Forward pass of the MultiViewTransformerEncoderDecoderACT model.
+
+        Args:
+            x (Tuple[torch.Tensor, torch.Tensor]):
+                    Image features and positional encodings.
+            qpos (torch.Tensor): Tensor containing proprioception features.
+            actions (torch.Tensor, optional): Tensor containing action sequences.
+            is_pad (torch.Tensor, optional): Tensor indicating padding positions.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]]:
+                    Tuple containing action predictions,
+                    padding predictions,
+                    and a list of latent variables [mu, logvar].
+        """
+
+        bs = x[0].shape[0]
+
+        # Proprioception features
+        proprio_input = self.input_proj_robot_state(qpos)
+
+        if True:
+            mu = logvar = torch.zeros([bs, self.latent_dim], dtype=torch.float32).to(qpos.device)
+            latent_sample = self.reparametrize_n(mu, logvar.div(2).exp(), num_samples)
+            latent_sample = latent_sample.reshape(num_samples*bs, self.latent_dim)
+            latent_input = self.latent_out_proj(latent_sample)
+            src = torch.repeat_interleave(x[0], num_samples, dim=0)
+            proprio_input = torch.repeat_interleave(proprio_input, num_samples, dim=0)
+
+        # Apply transformer block
+        # Change to get the last output after passing through all decoder layer.
+        # Fix the bug https://github.com/tonyzhaozh/act/issues/25#issue-2258740521
+        hs = self.transformer(
+            src,
+            None,
+            self.query_embed.weight,
+            x[1],
+            latent_input,
+            proprio_input,
+            self.additional_pos_embed.weight,
+            task_emb=task_emb,
+        )[-1]
+
+        a_hat = self.action_head(hs)
+        is_pad_hat = None
+        a_hat = a_hat.reshape(num_samples, bs, -1, a_hat.shape[-1])
+        return a_hat, is_pad_hat, [mu, logvar]
+
+    def reparametrize_n(self,mu, std, n):
+        eps = Variable(std.data.new(n, *std.size()).normal_())
+        self.normal_samples = mu.unsqueeze(0) + std.unsqueeze(0) * eps if self.normal_samples is None else self.normal_samples
+        return self.normal_samples
 
     def calculate_loss(
         self,

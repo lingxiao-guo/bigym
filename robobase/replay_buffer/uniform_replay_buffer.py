@@ -39,7 +39,7 @@ TRUNCATED = "truncated"
 INDICES = "indices"
 IS_FIRST = "is_first"
 DISCOUNT = "discount"
-
+LABEL = "label"
 
 def episode_len(episode):
     # subtract -1 because the last final transition
@@ -60,6 +60,43 @@ def load_episode(fn: Path):
         episode = {k: episode[k] for k in episode.keys()}
         return episode
 
+def downsample_action_with_labels(action, label):
+    low_v = 2
+    high_v = 4
+    
+    horizon, dim = action.shape
+    new_actions = np.zeros_like(action)
+    new_labels = np.zeros_like(label)
+    current_action = action  # Shape: (horizon, dim)
+    current_label = label  # Shape: (horizon,)
+
+    indices = []
+    i = -1
+    while i < horizon:
+        if current_label[i] == 0 and i+low_v < horizon:
+            i += low_v  # Skip next element
+            indices.append(i)
+        elif current_label[i] == 1:
+            # Check the next high_v elements if they exist
+            if i + high_v < horizon and np.all(current_label[i:i + high_v] == 1):
+                i += high_v  # Skip the next 3 elements
+                indices.append(i)
+            else:
+                # Find the next 0 element if it exists
+                next_zero = np.nonzero(current_label[i + 1:] == 0)[0]
+                if len(next_zero) > 0:
+                    i = i + 1 + next_zero[0]
+                    indices.append(i)
+                else:
+                    break  # No more 0s, stop
+        else:
+            i += 1
+    
+    # Use the indices to extract new action and label
+    new_actions[:len(indices)] = current_action[indices]
+    new_labels[:len(indices)] = current_label[indices]
+
+    return new_actions
 
 class UniformReplayBuffer(ReplayBuffer):
     """A simple out-of-graph Replay Buffer.
@@ -273,6 +310,7 @@ class UniformReplayBuffer(ReplayBuffer):
         logging.info("\t nstep: %d", self._nstep)
         logging.info("\t gamma: %f", self._gamma)
         self._is_first = True
+        self.labels = None
 
     @property
     def frame_stack(self):
@@ -443,6 +481,10 @@ class UniformReplayBuffer(ReplayBuffer):
 
         eps_idx = self._num_episodes
         eps_len = episode_len(episode)
+        if self.labels is not None:
+            label = self.labels[eps_idx]
+            assert (eps_len+1) == len(label)
+            episode[LABEL] = label
         global_idx = self.add_count - eps_len
         self._num_episodes += 1
         self._num_transitions += eps_len
@@ -560,8 +602,8 @@ class UniformReplayBuffer(ReplayBuffer):
 
     def _sample_episode(self):
         eps_fn = np.random.choice(self._episode_files)
-        _, _, global_index = [int(x) for x in eps_fn.stem.split("_")[1:]]
-        return self._episodes[eps_fn], global_index
+        eps_idx, eps_len, global_index = [int(x) for x in eps_fn.stem.split("_")[1:]]
+        return eps_idx, eps_len, self._episodes[eps_fn], global_index
 
     def _load_episode_into_worker(self, eps_fn: Path, global_idx: int):
         # Load episode into memory
@@ -580,7 +622,6 @@ class UniformReplayBuffer(ReplayBuffer):
             for k in keys[: episode_len(early_eps)]:
                 del self._global_idxs_to_episode_and_transition_idx[k]
             early_eps_files.unlink(missing_ok=True)
-
         self._episode_files.append(eps_fn)
         self._episode_files.sort()  # NOTE: eps_fn starts with created timestamp.
         # so after sort, earliest episode appears first.
@@ -613,7 +654,6 @@ class UniformReplayBuffer(ReplayBuffer):
         fetched_size = 0
         for eps_fn in eps_fns:
             eps_idx, eps_len, global_idx = [int(x) for x in eps_fn.stem.split("_")[1:]]
-
             # Each worker should only contain its relevant indices.
             if self._num_workers > 0 and eps_idx % self._num_workers != worker_id:
                 continue
@@ -640,12 +680,15 @@ class UniformReplayBuffer(ReplayBuffer):
             for k, v in ep.items():
                 flattened[k] = np.concatenate([flattened[k], v], 0)
         return flattened
+    
+    def _set_labels(self, labels):
+        self.labels = labels
 
     def _sample_sequential(self, global_index=None):
         # Sample transition index
         if global_index is None:
             # NOTE: here global index is the index of the start of episode.
-            episode, global_index = self._sample_episode()
+            _,_,episode, global_index = self._sample_episode()
 
             # When using sequential, we ensure that frame stack does not repeat
             # the initial frames when sampling the beginning of the episode.
@@ -658,7 +701,7 @@ class UniformReplayBuffer(ReplayBuffer):
             episodes_to_flatten = [episode]
             while idx >= total_len:
                 # Spill over into another episode
-                _episode, _global_index = self._sample_episode()
+                _,_,_episode, _global_index = self._sample_episode()
                 total_len += episode_len(_episode)
                 episodes_to_flatten.append(_episode)
             episode = self._flatten_episodes(episodes_to_flatten)
@@ -713,7 +756,8 @@ class UniformReplayBuffer(ReplayBuffer):
         # Sample transition index
         if global_index is None:
             # NOTE: here global index is the index of the start of episode.
-            episode, global_index = self._sample_episode()
+            eps_idx, eps_len, episode, global_index = self._sample_episode()
+            label = episode[LABEL] if self.labels is not None else None
             min_idx, max_idx = 0, np.maximum(episode_len(episode) - self._nstep + 1, 1)
             idx = np.random.randint(min_idx, max_idx)
 
@@ -763,8 +807,17 @@ class UniformReplayBuffer(ReplayBuffer):
         action_start_idx = idx
         action_end_idx = min(idx + self._action_seq_len, ep_len)
         # - action_idxs contains indices of all action, considering action sequences.
+        # 1x speed
         action_idxs = list(range(action_start_idx, action_end_idx))
         action_seq = episode[ACTION][action_idxs]
+        ################################## ACCELERATE #####################################
+        # constant
+        # action_seq = episode[ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)] 
+        # entropy piecewise
+        if label is not None:
+          label = label[action_start_idx:]
+          action_seq = episode[ACTION][action_start_idx:]
+          action_seq = downsample_action_with_labels(action_seq,label.copy())[:(action_end_idx-action_start_idx)] 
         # - Pad zeros to the end if action_sequences exceeds eps_len
         if len(action_seq) < self._action_seq_len:
             num_action_to_pad = self._action_seq_len - len(action_seq)
@@ -815,7 +868,6 @@ class UniformReplayBuffer(ReplayBuffer):
         self._try_fetch()
 
         self._samples_since_last_fetch += 1
-
         if self._sequential:
             return self._sample_sequential(global_index)
         else:

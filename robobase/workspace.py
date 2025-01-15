@@ -4,6 +4,7 @@ import sys
 import os
 import json
 import time
+import copy
 import random
 from typing import Callable, Any
 from functools import partial
@@ -12,6 +13,7 @@ import logging
 from gymnasium import spaces
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
+from tqdm import tqdm
 
 from robobase import utils
 from robobase.envs.env import EnvFactory
@@ -99,6 +101,7 @@ def set_seed(seed):
     torch.manual_seed(seed)
     np.random.seed(seed)
 
+KDE = utils.KDE()
 class Workspace:
     def __init__(
         self,
@@ -111,14 +114,14 @@ class Workspace:
             env_factory = _create_default_envs(cfg)
         if create_replay_fn is None:
             create_replay_fn = _create_default_replay_buffer
-
+    
         self.work_dir = Path(
             hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
             if work_dir is None
             else work_dir
         )
         print(f"workspace: {self.work_dir}")
-
+        
         # Sanity checks
         if (
             not cfg.is_imitation_learning
@@ -267,6 +270,11 @@ class Workspace:
 
         self._shutting_down = False
 
+        self.best_metrics = {
+            "best_episode_success": 0,  # 默认值为 0
+            "best_episode_len": 0,  # 默认值为 0
+        }
+
     @property
     def pretrain_steps(self):
         return self._pretrain_step
@@ -345,10 +353,6 @@ class Workspace:
         eval_until_episode = utils.Until(self.cfg.num_eval_episodes)
         first_rollout = []
         metrics = {}
-        best_metrics = {
-            "best_episode_success": 0,  # 默认值为 0
-            "best_episode_len": 0,  # 默认值为 0
-        }
         episode_len = []
         seeds = np.arange(0, self.cfg.num_eval_episodes)
         rollout_id = 0
@@ -381,7 +385,7 @@ class Workspace:
                 t += 1
             if episode == 0:
                 first_rollout = np.array(self.eval_video_recorder.frames)
-            self.eval_video_recorder.save(f"{self.global_env_steps}.mp4")
+            self.eval_video_recorder.save(f"{self.global_env_steps}-{episode}.mp4")
             success = info.get("task_success")
             if success:
                 episode_len.append(t)
@@ -409,14 +413,21 @@ class Workspace:
             "episode_success": successes / episode,  # 默认值为 0
             "episode_len": avg_length,  # 默认值为 0
         }
-        if best_metrics['best_episode_success'] < (successes / episode):
-            best_metrics = {
+        if self.best_metrics['best_episode_success'] < (successes / episode):
+            self.best_metrics = {
+                "best_episode_success": successes / episode,  # 默认值为 0
+                "best_episode_len": avg_length,  # 默认值为 0
+            }
+            self.save_snapshot(best_ckpt = True)
+
+        if self.best_metrics['best_episode_success'] == (successes / episode) and self.best_metrics['best_episode_len'] > avg_length:
+            self.best_metrics = {
                 "best_episode_success": successes / episode,  # 默认值为 0
                 "best_episode_len": avg_length,  # 默认值为 0
             }
             self.save_snapshot(best_ckpt = True)
         print("Success rate: ",successes / episode,"episode_length: ", avg_length )
-        print("Best success rate:",best_metrics["best_episode_success"],"best episode_length",best_metrics["best_episode_len"])
+        print("Best success rate:",self.best_metrics["best_episode_success"],"best episode_length",self.best_metrics["best_episode_len"])
         # 1. 检查文件是否存在
         file_path = self.work_dir /'metrics.txt'
         if os.path.exists(file_path):
@@ -428,62 +439,118 @@ class Workspace:
 
         # 3. 将新的 metrics 数据追加到现有内容
         existing_data.append(new_metrics)
-        existing_data.append(best_metrics)
+        existing_data.append(self.best_metrics)
         # 4. 写入文件（追加）
         with open(file_path, 'w') as f:
             json.dump(existing_data, f, indent=4)
         return metrics
     
-    def label(self, demos) -> dict[str, Any]:
-        # demos: List[List]
+    def label(self) -> dict[str, Any]:
+        all_demos = self.env_factory._demos
+        if True:
+            # Filter successful demonstrations
+            demos = []
+            for i, demo in enumerate(all_demos):
+                successful = (demo[0][-1]["demo"] == 1)
+                if successful:
+                    demos.append(demo)
+                else:
+                    print(f"Skipping failed demonstration {i}")
+                    continue
+        # demos: List[DemoStep]
         self.agent.set_eval_env_running(True)
         step, episode, total_reward, successes = 0, 0, 0, 0
         eval_until_episode = utils.Until(len(demos))
         first_rollout = []
         episode_len = []
+        precision_len = []
         rollout_id = 0
-        entropy = []
+        wrapped_env = self.env_factory._wrap_env(
+            utils.DemoEnv(
+                copy.deepcopy(demos), self.env_factory._action_space, self.env_factory._observation_space
+            ),
+            self.cfg,
+            demo_env=True,
+            train=False,
+        )
         while eval_until_episode(episode):
             demo = demos[episode]
-            observation, info = demo[0] # self.eval_env.reset()
+            demo_entropy = []
+            demo_frames = []
             # eval agent always has last id (ids start from 0)
+            obs, info = wrapped_env.reset()
+            fake_action = wrapped_env.action_space.sample()
+            term, trunc = False, False
             self.agent.reset(self.main_loop_iterations, [self.train_envs.num_envs])
-            enabled = eval_record_all_episode or episode == 0
-            self.eval_video_recorder.init(self.eval_env, enabled=enabled)
             termination, truncation = False, False
             t = 0
-            while not (termination or truncation):
-                (
-                    action,
-                    (next_observation, reward, termination, truncation, next_info),
-                    env_metrics,
-                ) = self._perform_env_steps(observation, self.eval_env, True)
-                observation = next_observation
-                info = next_info
-                # Below is testing a feature wich can be enforced in v6.
-                # The ability will allow agent info to be passed to envirionments.
-                # This will be habdy for rednering any auxiliary outputs.
-                if "agent_act_info" in env_metrics:
-                    if hasattr(self.eval_env, "give_agent_info"):
-                        self.eval_env.give_agent_info(env_metrics["agent_act_info"])
-                self.eval_video_recorder.record(self.eval_env)
-                total_reward += reward
-                step += 1
-                t += 1
-            if episode == 0:
-                first_rollout = np.array(self.eval_video_recorder.frames)
-            self.eval_video_recorder.save(f"{self.global_env_steps}.mp4")
-            success = info.get("task_success")
-            if success:
-                episode_len.append(t)
-            if enabled:
-                print(f"Rollout{rollout_id}, Success: {success}, Length:{t}")
-            rollout_id += 1
-            if success is not None:
-                successes += np.array(success).astype(int).item()
-            else:
-                successes = None
+            max_timesteps = len(demo)
+            # temporal aggregation for entropy estimation:
+            num_queries = self.eval_env.action_space.shape[0]
+            all_time_actions = torch.zeros(
+                [max_timesteps, max_timesteps + num_queries, self.eval_env.action_space.shape[1]]
+            ).cuda()
+            all_time_samples = torch.zeros(
+                [max_timesteps, max_timesteps + num_queries, 50,self.eval_env.action_space.shape[1]]
+            ).cuda()
+            for t in tqdm(range(max_timesteps)):                
+                action_samples = self._perform_label_steps(obs, True)
+                all_actions = action_samples[[0]]                
+                all_time_actions[[t], t : t + num_queries] = all_actions
+                all_time_samples[[t], t : t+ num_queries] = action_samples.permute(1,2,0,3)
+                actions_for_curr_step = all_time_actions[:, t]
+                actions_populated = torch.all(
+                        actions_for_curr_step != 0, axis=1
+                    )
+                samples_for_curr_step = all_time_samples[:, t]
+                samples_for_curr_step = samples_for_curr_step[actions_populated]
+                # entropy = torch.mean(torch.std(samples_for_curr_step[:,:,:-2].flatten(0,1),dim=0),dim=-1)
+                entropy = KDE.kde_entropy(samples_for_curr_step.flatten(0,1).unsqueeze(0)).squeeze()
+                demo_entropy.append(entropy.cpu().numpy())
+                frames = demo[t][0]
+                text = entropy.detach().cpu().numpy()
+                head_frame = utils.put_text(frames['rgb_head'].transpose((1,2,0)), "{:.{}e}".format(text, 2), font_size=1, resize=True)
+                wrist_l_frame = utils.put_text(frames['rgb_left_wrist'].transpose((1,2,0)), "{:.{}e}".format(text, 2), font_size=1, resize=True)
+                wrist_r_frame = utils.put_text(frames['rgb_right_wrist'].transpose((1,2,0)), "{:.{}e}".format(text, 2), font_size=1, resize=True)
+                demo_frames.append(np.concatenate((head_frame,wrist_l_frame,wrist_r_frame),axis=1))
+                if t < max_timesteps-1:
+                    next_obs, rew, term, trunc, next_info = wrapped_env.step(fake_action)
+                obs = next_obs
+
+            print(f'Episode-{episode} labeled')
+            labels = utils.hdbscan_with_custom_merge(demo_entropy, self.work_dir, episode)
+            save_dir = os.path.join(self.work_dir,f'../bigym_{self.cfg.env.task_name}/labels')
+            self.save_labels(labels, save_dir, f'labels_{episode}')
+            episode_len.append(max_timesteps)
+            precision_len.append(np.sum(labels == 0))
+            demo_frames = [utils.put_text(demo_frames[i], str(int(labels[i])), font_size=1.5, position='bottom') for i in range(len(demo_frames))]
+            self.eval_video_recorder.save_labeled_demo(demo_frames, f"label-{episode}.mp4")
+            # TODO: calculate labels from entropy; store entropy & label in the dataset
             episode += 1
+        print('Precision rate:',np.sum(precision_len)/np.sum(episode_len))
+    
+    def save_labels(self, data, file_path, file_name):
+        if not file_name.endswith('.npy'):
+            file_name += '.npy'
+        if not os.path.exists(file_path):
+            os.makedirs(file_path)
+        file_path = os.path.join(file_path, file_name)
+        np.save(file_path, data)
+        print(f"Label saved to {file_path}")
+    
+    def load_labels(self):
+        dir_path = os.path.join(self.work_dir,f'../bigym_{self.cfg.env.task_name}/labels')
+        self.labels = []
+        episode = 0
+        while os.path.exists(os.path.join(dir_path,f'labels_{episode}.npy')):
+            file_path = os.path.join(dir_path, f'labels_{episode}.npy')
+            self.labels.append(np.load(file_path))
+            episode += 1
+
+    def check_labels(self):
+        # Check if the length of labels match the length of the filtered demos
+        for i in range(len(self.labels)):
+            assert len(self.labels[i]) == len(self._demos[i])
 
     def _add_to_replay(
         self,
@@ -587,13 +654,20 @@ class Workspace:
     def _load_demos(self):
         if (num_demos := self.cfg.demos) != 0:
             # NOTE: Currently we do not protect demos from being evicted from replay
+            if self.cfg.label:
+                self.load_labels()
+                self.replay_buffer._set_labels(self.labels)
+            else:
+                self.labels = None
             self.env_factory.load_demos_into_replay(
                 self.cfg,
                 self.replay_buffer,
                 is_demo_buffer=True if self.cfg.is_imitation_learning else False,
+                labels = self.labels
             )
             if self.use_demo_replay:
                 # Load demos to the dedicated demo_replay_buffer
+                self.demo_replay_buffer._set_labels(self.labels)
                 self.env_factory.load_demos_into_replay(
                     self.cfg, self.demo_replay_buffer, is_demo_buffer=True
                 )
@@ -682,6 +756,25 @@ class Workspace:
                 metrics[f"env_info/{k}"] = v if eval_mode else v[0]
 
         return action, (*env_step_tuple, next_info), metrics
+    
+    def _perform_label_steps(
+        self, observations: dict[str, np.ndarray],  eval_mode: bool
+    ) -> tuple[np.ndarray, tuple, dict[str, Any]]:
+        if self.agent.logging:
+            start_time = time.time()
+        with torch.no_grad(), utils.eval_mode(self.agent):
+            torch_observations = {
+                k: torch.from_numpy(v).to(self.device) for k, v in observations.items()
+            }
+            if eval_mode:
+                torch_observations = {
+                    k: v.unsqueeze(0) for k, v in torch_observations.items()
+                }
+            action_samples = self.agent.sample(
+                torch_observations, self.main_loop_iterations, eval_mode=eval_mode
+            )
+
+        return action_samples
 
     def _pretrain_on_demos(self):
         if self.cfg.num_pretrain_steps > 0:
@@ -712,7 +805,7 @@ class Workspace:
                     )
 
                 if should_pretrain_eval(self.pretrain_steps):
-                    eval_metrics = self._eval()
+                    eval_metrics = self._eval(eval_record_all_episode=True)
                     eval_metrics.update(self._get_common_metrics())
                     self.logger.log_metrics(
                         eval_metrics, self.pretrain_steps, prefix="pretrain_eval"

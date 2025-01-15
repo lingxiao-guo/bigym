@@ -5,6 +5,8 @@ import time
 import warnings
 import selectors
 import sys
+import cv2
+import os
 
 from gymnasium.spaces import Box
 from omegaconf import DictConfig
@@ -17,6 +19,9 @@ from torch.distributions.utils import _standard_normal
 from torch.autograd import Variable
 from typing import List, Callable
 from scipy.spatial.transform import Rotation as R
+import matplotlib.pyplot as plt
+import hdbscan
+from sklearn.ensemble import IsolationForest
 
 from robobase.envs.env import Demo, DemoEnv
 from robobase.replay_buffer.replay_buffer import ReplayBuffer
@@ -111,6 +116,230 @@ def uniform_weight_init(given_scale):
 
     return f
 
+def put_text(img, text, font_size=1, thickness=2, resize=False,position="top"):
+    img = img.copy()
+    if resize:
+        img = cv2.resize(np.uint8(img), (256, 256))
+    if position == "top":
+        p = (10, 30)
+    elif position == "bottom":
+        p = (300, img.shape[0] - 20)
+    # put the frame number in the top left corner
+    img = cv2.putText(
+        img,
+        text,
+        p,
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_size,
+        (0, 255, 255),
+        thickness,
+        cv2.LINE_AA,
+    )
+    return img
+
+
+from sklearn.ensemble import IsolationForest
+import numpy as np
+
+from sklearn.ensemble import IsolationForest
+import numpy as np
+
+def remove_outliers_isolation_forest(data, contamination=0.1):
+    model = IsolationForest(contamination=contamination)
+    predictions = model.fit_predict(data.reshape(-1, 1))
+    
+    data = data.copy()  # 避免修改原数据
+
+    # 处理首点
+    if predictions[0] == -1:  # 如果首点是离群点
+        next_idx = 1
+        while next_idx < len(data) and predictions[next_idx] == -1:
+            next_idx += 1
+        if next_idx < len(data):  # 找到最近的非离群点
+            data[0] = data[next_idx]
+
+    # 处理尾点
+    if predictions[-1] == -1:  # 如果尾点是离群点
+        prev_idx = len(data) - 2
+        while prev_idx >= 0 and predictions[prev_idx] == -1:
+            prev_idx -= 1
+        if prev_idx >= 0:  # 找到最近的非离群点
+            data[-1] = data[prev_idx]
+
+    # 处理中间的离群点
+    for i in range(1, len(data) - 1):
+        if predictions[i] == -1:  # 如果是离群点
+            # 找到前一个非离群点
+            prev_idx = i - 1
+            while prev_idx >= 0 and predictions[prev_idx] == -1:
+                prev_idx -= 1  # 跳过离群点
+
+            # 找到后一个非离群点
+            next_idx = i + 1
+            while next_idx < len(data) and predictions[next_idx] == -1:
+                next_idx += 1  # 跳过离群点
+
+            # 如果能找到前后非离群点，用它们的均值替换
+            if prev_idx >= 0 and next_idx < len(data):
+                data[i] = (data[prev_idx] + data[next_idx]) / 2
+            # 如果只能找到前一个非离群点，用前一个非离群点替换
+            elif prev_idx >= 0:
+                data[i] = data[prev_idx]
+            # 如果只能找到后一个非离群点，用后一个非离群点替换
+            elif next_idx < len(data):
+                data[i] = data[next_idx]
+                
+    return data
+
+
+
+def hdbscan_with_custom_merge(entropy, dir, rollout_id, plot=True):
+    """
+    使用HDBSCAN进行初步聚类，并根据规则进一步合并：
+    - 第二个特征值小于0的点合并为一个簇；
+    - 其余点合并为另一个簇；
+    - 离群点 (-1 标签) 不参与合并。
+
+    参数:
+    X (array-like): 输入的数据
+    dir (str): 保存图像的目录路径
+    rollout_id (int): 用于标记图像文件名
+    plot (bool): 是否绘制聚类结果
+
+    返回:
+    labels (array): 合并后的簇标签
+    """
+    # 排除离群点
+    entropy = np.array(entropy)
+    entropy_norm = (entropy-np.mean(entropy))/np.std(entropy)
+    # entropy_norm[entropy_norm>2] = 0 
+    entropy_norm = remove_outliers_isolation_forest(entropy_norm)
+    entropy_norm = (entropy_norm-np.mean(entropy_norm))/np.std(entropy_norm)
+    indices = np.arange(len(entropy_norm))
+    indices = (indices-np.mean(indices))/np.std(indices)
+    X = np.stack((indices,entropy_norm),axis=-1)
+    # 初始化 HDBSCAN
+    clusterer = hdbscan.HDBSCAN(min_cluster_size=5)
+    clusterer.fit(X)
+    # TODO: add max_samples constraint
+    # 初步聚类的标签
+    initial_labels = clusterer.labels_
+
+    # 将前?个点标记为离群点
+    # initial_labels[:50] = -1
+    
+    # 后处理步骤，确保每个簇最多包含25个样本
+    def split_large_clusters(labels, data, max_size=25):
+        unique_labels = np.unique(labels)
+        new_label = max(labels) + 1  # 用于分配新的簇标签
+
+        for label in unique_labels:
+            if label == -1:  # 跳过离群点
+                continue
+
+            # 获取当前簇的索引
+            cluster_indices = np.where(labels == label)[0]
+            if len(cluster_indices) > max_size:
+                # 如果簇的大小超过max_size，进行拆分
+                cluster_points = data[cluster_indices]
+                
+                # 基于某些策略进行簇的拆分（例如按照距离拆分）
+                # 这里用的是简单的按顺序分割的方法，可以根据需要更改为其他策略
+                num_splits = len(cluster_indices) // max_size + (len(cluster_indices) % max_size > 0)
+                
+                for i in range(num_splits):
+                    split_indices = cluster_indices[i * max_size:(i + 1) * max_size]
+                    labels[split_indices] = new_label
+                    new_label += 1  # 为每个拆分簇分配一个新的标签
+
+        return labels
+    
+    # 拆分过大的簇
+    initial_labels = split_large_clusters(initial_labels, X)
+    
+    # 获取非离群点的唯一标签
+    unique_labels = np.unique(initial_labels[initial_labels >= 0])  # 排除噪声点 (-1)
+    
+    # 初始化合并后的标签
+    refined_labels = np.full_like(initial_labels, -1)  # 默认所有点为离群值
+
+    # 合并规则：
+    # - 第二个特征 < 0 的点分为一类（合并到 0 类）
+    # - 其余点分为另一类（合并到 1 类）
+    for label in unique_labels:
+        # 获取当前簇的点
+        cluster_points = X[initial_labels == label]
+        
+        # 判断当前簇的第二个特征的值是否全部小于 0
+        if  np.all(cluster_points[:, 1] < 0):
+            refined_labels[initial_labels == label] = 0  # 合并到第 0 类
+        else:
+            refined_labels[initial_labels == label] = -1  # 合并到第 1 类
+
+    # 可视化原图
+    if plot:
+        plt.figure(figsize=(10, 6))
+        # entropy[entropy>(np.mean(entropy)+2*np.std(entropy))] = 0
+        plt.plot(np.arange(len(entropy_norm)), entropy_norm, marker='o', markersize=5)  # 使用点标记每个数据点
+        # plt.ylim([0, np.mean(entropy)+2*np.std(entropy)])
+        plt.title('1D Data Plot')
+        plt.xlabel('Timestep')
+        plt.ylabel('Entropy')
+        plt.grid(True)  # 添加网格线
+        os.makedirs(os.path.join(dir, "plot"), exist_ok=True)
+        plt.savefig(os.path.join(dir, f"plot/rollout{rollout_id}-entropy-curve.png"))
+        plt.close()
+
+    # 可视化初步聚类结果
+    if plot:
+        plt.figure(figsize=(10, 6))
+        plt.scatter(X[:, 0], X[:, 1], c=initial_labels, cmap='viridis', marker='o')
+        plt.title('HDBSCAN Initial Clustering')
+        plt.xlabel('Feature 1')
+        plt.ylabel('Feature 2')
+        plt.colorbar(label='Cluster Label')
+        os.makedirs(os.path.join(dir, "plot"), exist_ok=True)
+        plt.savefig(os.path.join(dir, f"plot/rollout{rollout_id}-hdbscan-raw.png"))
+        plt.close()
+
+    # 可视化合并后的结果
+    if plot:
+        plt.figure(figsize=(10, 6))
+        scatter = plt.scatter(X[:, 0], X[:, 1], c=refined_labels, cmap='viridis', marker='o')
+        cbar = plt.colorbar(scatter)
+        cbar.set_label('Refined Cluster Label', rotation=270, labelpad=15)
+        plt.title('HDBSCAN + Custom Merge Clustering')
+        plt.xlabel('Feature 1')
+        plt.ylabel('Feature 2')
+        plt.grid(True)
+        plt.savefig(os.path.join(dir, f"plot/rollout{rollout_id}-hdbscan-refine.png"))
+        plt.close()
+    return np.abs(refined_labels)
+
+def gaussian_kernel(x, bandwidth):
+    """
+    计算高斯核函数。
+
+    Args:
+    - x (torch.Tensor): 样本点，形状为 (batch_size, num_samples, dim)
+    - bandwidth (float): 核函数的带宽（标准差）
+
+    Returns:
+    - kernel_values (torch.Tensor): 高斯核的计算值，形状为 (batch_size, num_samples, num_samples)
+    """
+    batch_size, num_samples, dim = x.size()
+    
+    # 扩展维度以便计算距离矩阵
+    x_i = x.unsqueeze(2)  # (batch_size, num_samples, 1, dim)
+    x_j = x.unsqueeze(1)  # (batch_size, 1, num_samples, dim)
+    
+    # 计算距离矩阵
+    distances = torch.sum((x_i - x_j) ** 2, dim=-1)  # (batch_size, num_samples, num_samples)
+    
+    # 计算高斯核
+    kernel_values = torch.exp(-distances / (2 * bandwidth ** 2))
+    
+    return kernel_values
 
 class Until:
     def __init__(self, until, action_repeat=1):
@@ -133,7 +362,7 @@ class Every:
         if self._every is None or self._every == 0:
             return False
         every = self._every // self._action_repeat
-        if step % every == 0:
+        if step % every == 0 and step != 0:
             return True
         return False
 
@@ -224,6 +453,54 @@ class TruncatedNormal(pyd.Normal):
         x = self.loc + eps
         return self._clamp(x)
 
+class KDE():
+    def __init__(self, kde_flag=True, marginal_flag=True):
+        self.flag = kde_flag
+        self.marginal_flag = marginal_flag
+    
+    def kde_entropy(self,x,k=1):
+        """
+        使用核密度估计计算样本的熵，并对批次进行并行计算。
+
+        Args:
+        - x (torch.Tensor): 样本张量，形状为 (batch_size, num_samples, dim)
+        - bandwidth (float): 核函数的带宽（标准差）
+
+        Returns:
+        - entropy (torch.Tensor): 计算得到的熵，形状为 (batch_size, 1)
+        """
+        batch_size, num_samples, dim = x.size()
+        if self.flag:
+            bandwidth = self.estimate_bandwidth(x[0])
+            self.flag = False
+        bandwidth = 1 #  for insertion, 0.001 for transfer
+        # 计算高斯核
+        kernel_values = gaussian_kernel(x, bandwidth)  # (batch_size, num_samples, num_samples)
+    
+        # 计算密度
+        density = kernel_values.sum(dim=2) / num_samples  # (batch_size, num_samples)
+        
+        # 计算对数密度
+        log_density = torch.log(density + 1e-8)  # 添加平滑项以避免 log(0)
+        
+        # 计算熵
+        entropy = -log_density.mean(dim=1, keepdim=True)  # (batch_size, 1)
+        
+        return entropy
+
+    def estimate_bandwidth(self,x, rule='scott'):
+    
+        num_samples, dim = x.size()
+    
+        std = x.std(dim=0).mean().item()  # 计算各维度的标准差的平均值
+        if rule == 'silverman':
+            bandwidth = 1.06 * std * num_samples**(-1/5)
+        elif rule == 'scott':
+            bandwidth = std * num_samples**(-1/(dim + 4))
+        else:
+            raise ValueError("Unsupported rule. Choose 'silverman' or 'scott'.")
+    
+        return bandwidth
 
 def onehot_from_logits(logits, eps=0.0):
     """
@@ -583,7 +860,6 @@ def add_demo_to_replay_buffer(wrapped_env: DemoEnv, replay_buffer: ReplayBuffer)
         obs = next_obs
         info = next_info
     final_obs, _ = obs, info
-
     for obs, action, rew, term, trunc, info, _ in ep:
         replay_buffer.add(obs, action, rew, term, trunc, demo=info["demo"])
 

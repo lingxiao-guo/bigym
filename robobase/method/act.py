@@ -215,6 +215,7 @@ class ACTPolicy(nn.Module):
         actions: torch.Tensor = None,
         is_pad: torch.Tensor = None,
         task_emb: torch.Tensor = None,
+        is_sample: bool = False,
     ) -> torch.Tensor:
         """
         Forward pass of the neural network.
@@ -268,6 +269,11 @@ class ACTPolicy(nn.Module):
             return loss_dict
 
         # else we are at inference time
+        elif is_sample:
+            x = self.actor_model.sample(
+                x, qpos, actions=actions, is_pad=is_pad, task_emb=task_emb
+            )
+            return x[0]
         else:
             x = self.actor_model(
                 x, qpos, actions=actions, is_pad=is_pad, task_emb=task_emb
@@ -362,6 +368,25 @@ class ActBCAgent(BC):
         action = self.actor(qpos, image)
 
         return action
+    
+    def sample(self, obs: dict[str, torch.Tensor], step: int, eval_mode: bool):
+        if self.low_dim_size > 0:
+            qpos = flatten_time_dim_into_channel_dim(
+                extract_from_spec(obs, "low_dim_state").unsqueeze(0)
+            )
+            qpos = qpos.detach()
+            qpos[:, 30:60] = 0 # mask qvel
+
+        if self.use_pixels:
+            rgb = flatten_time_dim_into_channel_dim(
+                stack_tensor_dictionary(extract_many_from_batch(obs, r"rgb.*"), 0).unsqueeze(0),
+                has_view_axis=True,
+            )
+            image = rgb.float().detach()
+
+        samples = self.actor(qpos, image, is_sample = True)
+
+        return samples
 
     @override
     def update(
@@ -386,8 +411,7 @@ class ActBCAgent(BC):
 
         actions = batch["action"]
         reward = batch["reward"]
-        # accelerate action First
-        # actions = actions[:, ::2]
+        
         if self.low_dim_size > 0:
             obs = flatten_time_dim_into_channel_dim(
                 extract_from_batch(batch, "low_dim_state")
