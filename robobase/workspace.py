@@ -408,7 +408,7 @@ class Workspace:
         if self.cfg.log_eval_video and len(first_rollout) > 0:
             metrics["eval_rollout"] = dict(video=first_rollout, fps=4)
         self.agent.set_eval_env_running(False)
-        avg_length = np.mean(episode_len) if len(episode_len)>0 else 0
+        avg_length = np.mean(episode_len) if len(episode_len)>0 else np.inf
         new_metrics = {
             "episode_success": successes / episode,  # 默认值为 0
             "episode_len": avg_length,  # 默认值为 0
