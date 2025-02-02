@@ -154,7 +154,6 @@ class BiGymEnvFactory(EnvFactory):
                 privileged_information=False if cfg.pixels else True,
             ),
             control_frequency=CONTROL_FREQUENCY_MAX // cfg.env.demo_down_sample_rate,
-            work_dir = work_dir
         )
 
     def make_train_env(self, cfg: DictConfig) -> gym.vector.VectorEnv:
@@ -262,7 +261,8 @@ class BiGymEnvFactory(EnvFactory):
             action_data = np.array(action_list)
             base_obs = [timestep.observation['proprioception_floating_base'] for timestep in demo.timesteps]
             base_obs = np.array(base_obs)
-            action_data[:,:4] = np.cumsum(action_data[:,:4],axis=0) + base_obs[0]
+            D = base_obs.shape[-1]
+            action_data[:,:D] = np.cumsum(action_data[:,:D],axis=0) + base_obs[0]
             for t in range(len(demo.timesteps)):
                 demo.timesteps[t].info['demo_action'] = action_data[t] 
             transformed_demos.append(demo)

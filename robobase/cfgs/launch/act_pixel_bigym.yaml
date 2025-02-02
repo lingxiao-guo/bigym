@@ -7,8 +7,8 @@ defaults:
 demos: 100
 num_pretrain_steps: 100000
 num_train_frames: 0
-eval_every_steps: 2500
-num_eval_episodes: 25
+eval_every_steps: 5000
+num_eval_episodes: 50
 batch_size: 256
 save_snapshot: true
 snapshot_every_n: 2500
@@ -20,7 +20,7 @@ frame_stack: 1
 is_imitation_learning: true
 
 action_repeat: 1
-action_sequence: 25
+action_sequence: 13
 execution_length: 1
 temporal_ensemble: true
 use_standardization: false  # Demo-based standardization for action space
@@ -38,3 +38,4 @@ hydra:
     dir: ./exp_local/pixel_act/bigym_${env.task_name}
 
 label: False
+distill: False

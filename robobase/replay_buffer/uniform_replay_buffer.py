@@ -40,6 +40,7 @@ INDICES = "indices"
 IS_FIRST = "is_first"
 DISCOUNT = "discount"
 LABEL = "label"
+TEACHER_ACTION = "teacher_action"
 
 def episode_len(episode):
     # subtract -1 because the last final transition
@@ -61,8 +62,8 @@ def load_episode(fn: Path):
         return episode
 
 def downsample_action_with_labels(action, label):
-    low_v = 2
-    high_v = 4
+    low_v = 1
+    high_v = 3
     
     horizon, dim = action.shape
     new_actions = np.zeros_like(action)
@@ -311,6 +312,7 @@ class UniformReplayBuffer(ReplayBuffer):
         logging.info("\t gamma: %f", self._gamma)
         self._is_first = True
         self.labels = None
+        self.teacher_actions = None
 
     @property
     def frame_stack(self):
@@ -485,6 +487,10 @@ class UniformReplayBuffer(ReplayBuffer):
             label = self.labels[eps_idx]
             assert (eps_len+1) == len(label)
             episode[LABEL] = label
+        if self.teacher_actions is not None:
+            teacher_action = self.teacher_actions[eps_idx]
+            assert (eps_len+1) == len(teacher_action)
+            episode[TEACHER_ACTION] = teacher_action
         global_idx = self.add_count - eps_len
         self._num_episodes += 1
         self._num_transitions += eps_len
@@ -683,6 +689,9 @@ class UniformReplayBuffer(ReplayBuffer):
     
     def _set_labels(self, labels):
         self.labels = labels
+    
+    def _set_teacher_actions(self, teacher_actions):
+        self.teacher_actions = teacher_actions
 
     def _sample_sequential(self, global_index=None):
         # Sample transition index
@@ -812,11 +821,11 @@ class UniformReplayBuffer(ReplayBuffer):
         action_seq = episode[ACTION][action_idxs]
         ################################## ACCELERATE #####################################
         # constant
-        # action_seq = episode[ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)] 
+        action_seq = episode[TEACHER_ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)] if self.teacher_actions is not None else episode[ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)]
         # entropy piecewise
         if label is not None:
           label = label[action_start_idx:]
-          action_seq = episode[ACTION][action_start_idx:]
+          action_seq =  episode[TEACHER_ACTION][action_start_idx:] if self.teacher_actions is not None else episode[ACTION][action_start_idx:]
           action_seq = downsample_action_with_labels(action_seq,label.copy())[:(action_end_idx-action_start_idx)] 
         # - Pad zeros to the end if action_sequences exceeds eps_len
         if len(action_seq) < self._action_seq_len:

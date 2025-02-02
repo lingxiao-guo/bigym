@@ -480,13 +480,20 @@ class KDE():
         # 计算密度
         density = kernel_values.sum(dim=2) / num_samples  # (batch_size, num_samples)
         
+        # 找到每个batch中密度最大的样本索引
+        max_indices = torch.argmax(density, dim=1)  # (batch_size,)
+
+        # 提取对应的样本点
+        batch_indices = torch.arange(batch_size)  # 生成batch索引 [0, 1, ..., batch_size-1]
+        max_density_points = x[batch_indices, max_indices, :]  # (batch_size, dim)
+
         # 计算对数密度
         log_density = torch.log(density + 1e-8)  # 添加平滑项以避免 log(0)
         
         # 计算熵
         entropy = -log_density.mean(dim=1, keepdim=True)  # (batch_size, 1)
         
-        return entropy
+        return entropy.squeeze(), max_density_points.squeeze()
 
     def estimate_bandwidth(self,x, rule='scott'):
     
