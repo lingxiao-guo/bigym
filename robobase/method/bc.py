@@ -269,7 +269,7 @@ class BC(Method):
         metrics = dict()
 
         # Update the encoder with auxiliary objective if we need to.
-        metrics.update(self.update_encoder_rep(rgb_obs.float()))
+        # metrics.update(self.update_encoder_rep(rgb_obs.float()))
 
         # Extract the features from the encoder
         multi_view_rgb_feats = self.encoder(rgb_obs.float())
@@ -279,7 +279,7 @@ class BC(Method):
     def multi_view_fusion(self, rgb_obs, multi_view_feats):
         metrics = dict()
 
-        if self.use_multicam_fusion:
+        if False: # self.use_multicam_fusion:
             # Update the view fusion with auxiliary objective if we need to.
             view_fusion_metrics = self.update_view_fusion_rep(multi_view_feats)
             metrics.update(view_fusion_metrics)
@@ -294,30 +294,13 @@ class BC(Method):
         return metrics, fused_view_feats
 
     def update_encoder_rep(self, rgb_obs):
-        loss = self.encoder.calculate_loss(rgb_obs)
-        if loss is None:
-            return {}
-        self.encoder.zero_grad(set_to_none=True)
-        loss.backward()
-        self.encoder_opt.step()
-        return {"encoder_rep_loss": loss.item()}
+        pass
 
     def update_view_fusion_rep(self, rgb_feats):
         # NOTE: This method will always try to update the encoder
         # Whether to update the encoder is the responsibility of view_fusion_model.
         # It should detach rgb_feats if it does not want to update the encoder.
-        loss = self.view_fusion.calculate_loss(rgb_feats)
-        if loss is None:
-            return {}
-        assert (
-            self.view_fusion_opt is not None
-        ), "Use `update_encoder_rep` to only update the encoder parameters."
-        self.encoder.zero_grad(set_to_none=True)
-        self.view_fusion_opt.zero_grad(set_to_none=True)
-        loss.backward()
-        self.encoder_opt.step()
-        self.view_fusion_opt.step()
-        return {"view_fusion_rep_loss": loss.item()}
+        pass
 
     def _act(self, observations: dict[str, torch.Tensor], eval_mode: bool):
         low_dim_obs = fused_rgb_feats = None

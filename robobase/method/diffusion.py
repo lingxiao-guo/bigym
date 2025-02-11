@@ -11,7 +11,7 @@ from robobase.models.fully_connected import FullyConnectedModule
 
 from robobase.models.diffusion_models import replace_bn_with_gn
 
-from diffusers import DDIMScheduler, SchedulerMixin
+from diffusers import DDPMScheduler, DDIMScheduler, SchedulerMixin
 from diffusers.training_utils import EMAModel
 
 from robobase.method.utils import (
@@ -56,6 +56,7 @@ class Actor(nn.Module):
 
     def _combine(self, low_dim_obs, fused_view_feats):
         flat_feats = []
+        low_dim_obs[:] = 0
         if low_dim_obs is not None:
             flat_feats.append(low_dim_obs)
         if fused_view_feats is not None:
@@ -71,7 +72,6 @@ class Actor(nn.Module):
         b = obs_features.shape[0]
         # sample noise to add to actions
         noise = torch.randn((b,) + self.action_space.shape, device=obs_features.device)
-
         # sample a diffusion iteration for each data point
         timesteps = torch.randint(
             0,
@@ -136,11 +136,14 @@ class Diffusion(BC):
                 "frame_stack_on_channel must be true for diffusion policies."
             )
         self.num_diffusion_iters = num_diffusion_iters
-        self.noise_scheduler = DDIMScheduler(
+        self.noise_scheduler = DDPMScheduler(
             num_train_timesteps=num_diffusion_iters,
             # the choise of beta schedule has big impact on performance
             # we found squared cosine works the best
             beta_schedule="squaredcos_cap_v2",
+            beta_start = 0.0001,
+            beta_end = 0.02,
+            variance_type = "fixed_small",
             # clip output to [-1,1] to improve stability
             clip_sample=True,
             # our network predicts noise (instead of denoised action)

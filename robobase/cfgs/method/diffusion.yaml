@@ -1,12 +1,11 @@
 # @package _global_
-action_sequence: 20
 
 method:
   _target_: robobase.method.diffusion.Diffusion
   is_rl: false
   lr: 1e-4
   num_train_steps: ${num_pretrain_steps}
-  num_diffusion_iters: 50
+  num_diffusion_iters: 100
   adaptive_lr: true
   actor_grad_clip: null
 

@@ -13,7 +13,7 @@ def main(cfg):
 
     workspace = Workspace(cfg)
 
-    snapshot = root_dir / "snapshot.pt"
+    snapshot = workspace.work_dir/'snapshots/snapshot.pt'
     if snapshot.exists():
         print(f"resuming: {snapshot}")
         workspace.load_snapshot()

@@ -413,19 +413,14 @@ class Workspace:
             "episode_success": successes / episode,  # 默认值为 0
             "episode_len": avg_length,  # 默认值为 0
         }
-        if self.best_metrics['best_episode_success'] < (successes / episode):
+        if self.best_metrics['best_episode_success'] <= (successes / episode):
             self.best_metrics = {
                 "best_episode_success": successes / episode,  # 默认值为 0
                 "best_episode_len": avg_length,  # 默认值为 0
             }
             self.save_snapshot(best_ckpt = True)
 
-        if self.best_metrics['best_episode_success'] == (successes / episode) and self.best_metrics['best_episode_len'] > avg_length:
-            self.best_metrics = {
-                "best_episode_success": successes / episode,  # 默认值为 0
-                "best_episode_len": avg_length,  # 默认值为 0
-            }
-            self.save_snapshot(best_ckpt = True)
+        
         print("Success rate: ",successes / episode,"episode_length: ", avg_length )
         print("Best success rate:",self.best_metrics["best_episode_success"],"best episode_length",self.best_metrics["best_episode_len"])
         # 1. 检查文件是否存在
@@ -569,6 +564,7 @@ class Workspace:
         dir_path = os.path.join(self.work_dir,f'../bigym_{self.cfg.env.task_name}/teacher_actions')
         self.teacher_actions = []
         episode = 0
+        assert os.path.exists(os.path.join(dir_path,f'teacher_actions_{episode}.npy'))
         while os.path.exists(os.path.join(dir_path,f'teacher_actions_{episode}.npy')):
             file_path = os.path.join(dir_path, f'teacher_actions_{episode}.npy')
             self.teacher_actions.append(np.load(file_path))
@@ -691,6 +687,18 @@ class Workspace:
                 self.replay_buffer._set_teacher_actions(self.teacher_actions)
             else:
                 self.teacher_actions = None
+            if self.cfg.mix:
+                if not self.cfg.label:
+                    self.load_labels()
+                    self.replay_buffer._set_labels(self.labels)
+                if not self.cfg.distill:
+                    self.load_teacher_actions()
+                    self.replay_buffer._set_teacher_actions(self.teacher_actions)
+
+            self.replay_buffer.set_flag(label=self.cfg.label,distill=self.cfg.distill,mix=self.cfg.mix)
+            if self.use_demo_replay:
+                self.demo_replay_buffer.set_flag(label=self.cfg.label,distill=self.cfg.distill,mix=self.cfg.mix)
+
 
             self.env_factory.load_demos_into_replay(
                 self.cfg,
@@ -701,6 +709,7 @@ class Workspace:
             if self.use_demo_replay:
                 # Load demos to the dedicated demo_replay_buffer
                 self.demo_replay_buffer._set_labels(self.labels)
+                self.demo_replay_buffer._set_teacher_actions(self.teacher_actions)
                 self.env_factory.load_demos_into_replay(
                     self.cfg, self.demo_replay_buffer, is_demo_buffer=True
                 )

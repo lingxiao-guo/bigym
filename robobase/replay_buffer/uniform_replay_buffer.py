@@ -41,6 +41,7 @@ IS_FIRST = "is_first"
 DISCOUNT = "discount"
 LABEL = "label"
 TEACHER_ACTION = "teacher_action"
+MIX_ACTION = "mix_action"
 
 def episode_len(episode):
     # subtract -1 because the last final transition
@@ -62,42 +63,57 @@ def load_episode(fn: Path):
         return episode
 
 def downsample_action_with_labels(action, label):
-    low_v = 1
-    high_v = 3
+    low_v = 2
+    high_v = 4
+    middle_v = (low_v+high_v)//2
     
     horizon, dim = action.shape
-    new_actions = np.zeros_like(action)
-    new_labels = np.zeros_like(label)
-    current_action = action  # Shape: (horizon, dim)
-    current_label = label  # Shape: (horizon,)
-
     indices = []
-    i = -1
-    while i < horizon:
-        if current_label[i] == 0 and i+low_v < horizon:
-            i += low_v  # Skip next element
-            indices.append(i)
-        elif current_label[i] == 1:
-            # Check the next high_v elements if they exist
-            if i + high_v < horizon and np.all(current_label[i:i + high_v] == 1):
-                i += high_v  # Skip the next 3 elements
-                indices.append(i)
-            else:
-                # Find the next 0 element if it exists
-                next_zero = np.nonzero(current_label[i + 1:] == 0)[0]
-                if len(next_zero) > 0:
-                    i = i + 1 + next_zero[0]
-                    indices.append(i)
-                else:
-                    break  # No more 0s, stop
-        else:
-            i += 1
+    i = 0  # 修正初始索引为0
     
-    # Use the indices to extract new action and label
-    new_actions[:len(indices)] = current_action[indices]
-    new_labels[:len(indices)] = current_label[indices]
-
+    while i < horizon:
+        if label[i] == 0:
+            # 低速模式：直接采样并移动1步
+            indices.append(i)
+            i += low_v
+        else:
+            # 进入高速区域：动态计算最佳步长
+            start = i
+            # 计算连续高速区域的长度
+            while i < horizon and label[i] == 1:
+                i += 1
+            seg_length = i - start
+            
+            # 动态分段处理（含过渡逻辑）
+            ptr = start
+            while ptr < start + seg_length:
+                remaining = start + seg_length - ptr
+                
+                # 速度过渡策略（可根据需要调整系数）
+                if ptr == start and start > 0 and label[start-1] == 0:
+                    # 过渡区开始：使用中等速度
+                    step = min(middle_v, remaining)
+                elif remaining >= high_v:
+                    # 稳定高速区：使用标准高速步长
+                    step = high_v
+                else:
+                    # 尾部处理：使用剩余最大可能步长
+                    step = max(1, min(remaining, high_v-1))
+                
+                indices.append(ptr)
+                ptr += step
+    
+    new_actions = action[indices]
+    
     return new_actions
+
+def get_mix_actions(teacher_action, action, label):
+    # 将 label 转换为布尔类型的列向量 (n, 1)，方便广播
+    mask = label.astype(bool)[:, np.newaxis]
+    # 根据 mask 选择对应的行，True 选 teacher_action，False 选 action
+    new_action = np.where(mask, teacher_action, action)
+    return new_action
+    
 
 class UniformReplayBuffer(ReplayBuffer):
     """A simple out-of-graph Replay Buffer.
@@ -313,6 +329,9 @@ class UniformReplayBuffer(ReplayBuffer):
         self._is_first = True
         self.labels = None
         self.teacher_actions = None
+        self.label_flag = False
+        self.distill_flag = False
+        self.mix_flag = False
 
     @property
     def frame_stack(self):
@@ -475,6 +494,11 @@ class UniformReplayBuffer(ReplayBuffer):
             episode[k] = np.array(v, self._storage_signature[k].type)
         self._current_episode = defaultdict(list)
         self._store_episode(episode)
+    
+    def set_flag(self,label,distill,mix):
+        self.label_flag = label
+        self.distill_flag = distill
+        self.mix_flag = mix
 
     def _store_episode(self, episode):
         if self._sequential:
@@ -489,8 +513,14 @@ class UniformReplayBuffer(ReplayBuffer):
             episode[LABEL] = label
         if self.teacher_actions is not None:
             teacher_action = self.teacher_actions[eps_idx]
+            # print(len(teacher_action),eps_len+1)
             assert (eps_len+1) == len(teacher_action)
             episode[TEACHER_ACTION] = teacher_action
+        
+        if self.mix_flag:
+            mix_action = get_mix_actions(episode[TEACHER_ACTION],episode[ACTION],episode[LABEL])
+            episode[MIX_ACTION] = mix_action
+
         global_idx = self.add_count - eps_len
         self._num_episodes += 1
         self._num_transitions += eps_len
@@ -821,9 +851,14 @@ class UniformReplayBuffer(ReplayBuffer):
         action_seq = episode[ACTION][action_idxs]
         ################################## ACCELERATE #####################################
         # constant
-        action_seq = episode[TEACHER_ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)] if self.teacher_actions is not None else episode[ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)]
+        # action_seq = episode[ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)]
+        # distill 
+        if self.distill_flag:
+            action_seq = episode[TEACHER_ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)] 
+        if self.mix_flag:
+            action_seq = episode[MIX_ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)]
         # entropy piecewise
-        if label is not None:
+        if self.label_flag:
           label = label[action_start_idx:]
           action_seq =  episode[TEACHER_ACTION][action_start_idx:] if self.teacher_actions is not None else episode[ACTION][action_start_idx:]
           action_seq = downsample_action_with_labels(action_seq,label.copy())[:(action_end_idx-action_start_idx)] 
