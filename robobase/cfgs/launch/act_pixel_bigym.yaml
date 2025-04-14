@@ -4,6 +4,7 @@ defaults:
   - ../env: null
   - ../method: act
 
+
 demos: -1
 num_pretrain_steps: 100000
 num_train_frames: 0
@@ -20,7 +21,7 @@ frame_stack: 1
 is_imitation_learning: true
 
 action_repeat: 1
-action_sequence: 25
+action_sequence: 50
 execution_length: 1
 temporal_ensemble: true
 use_standardization: false  # Demo-based standardization for action space
@@ -37,12 +38,13 @@ replay:
 label: False
 distill: False
 mix: False
-
+policy_class: act
+normalized_entropy_threshold: 1
 wandb:
-  name: act_bigym_${env.task_name}_label_${label}_distill_${distill}_seq_${action_sequence}
+  name: act_bigym_${env.task_name}_label_${label}_distill_${distill}_seq_${action_sequence}_threshold_${normalized_entropy_threshold}
 
 
 hydra:
   run:
-    dir: ./exp_local/pixel_act/bigym_${env.task_name}_seed_${seed}_seq_${action_sequence}_label_${label}_distill_${distill}_mix_${mix}
+    dir: ../exp_local/pixel_act/bigym_${env.task_name}_seed_${seed}_seq_${action_sequence}_label_${label}_distill_${distill}_mix_${mix}_threshold_${normalized_entropy_threshold}
 

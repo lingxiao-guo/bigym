@@ -4,13 +4,14 @@ defaults:
   - ../env: null
   - ../method: diffusion
 
+
 demos: -1
 num_pretrain_steps: 100000
 num_train_frames: 0
 eval_every_steps: 5000
 num_eval_episodes: 50
 batch_size: 256
-save_snapshot: true
+save_snapshot: false
 snapshot_every_n: 5000
 replay_size_before_train: 500
 
@@ -21,8 +22,8 @@ is_imitation_learning: true
 
 action_repeat: 1
 action_sequence: 24
-execution_length: 24
-temporal_ensemble: false
+execution_length: ${action_sequence}
+temporal_ensemble: true
 use_standardization: false  # Demo-based standardization for action space
 use_min_max_normalization: true  # Demo-based min-max normalization for action space
 min_max_margin: 0
@@ -39,13 +40,13 @@ replay:
 label: False
 distill: False
 mix: False
-
+threshold: 0
+policy_class: diffusion
 wandb:  # weight and bias
   use: true
-  project: dp_bigym_qz20
-  name: act_bigym_${env.task_name}_label_${label}_distill_${distill}_seq_${action_sequence}_prop_mask
-
+  project: dp_bigym_qz17
+  name: dp_bigym_${env.task_name}_seq_${action_sequence}_label_${label}_distill_${distill}_slowlast_highv4
 
 hydra:
   run:
-    dir: ./exp_local/pixel_dp/bigym_${env.task_name}_DDPM_seed_${seed}_label_${label}_distill_${distill}_seq_${action_sequence}_prop_mask
+    dir: ../exp_local/pixel_dp/bigym_${env.task_name}_seq_${action_sequence}_label_${label}_distill_${distill}_DDIM

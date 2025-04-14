@@ -193,7 +193,7 @@ def remove_outliers_isolation_forest(data, contamination=0.1):
 
 
 
-def hdbscan_with_custom_merge(entropy, dir, rollout_id, plot=True):
+def hdbscan_with_custom_merge(entropy, dir, rollout_id, plot=True, threshold=1):
     """
     使用HDBSCAN进行初步聚类，并根据规则进一步合并：
     - 第二个特征值小于0的点合并为一个簇；
@@ -216,8 +216,19 @@ def hdbscan_with_custom_merge(entropy, dir, rollout_id, plot=True):
     entropy_norm = remove_outliers_isolation_forest(entropy_norm)
     entropy_norm = (entropy_norm-np.mean(entropy_norm))/np.std(entropy_norm)
     indices = np.arange(len(entropy_norm))
+    ####################### simple implementation #####################
+    entropy_norm = np.array(entropy_norm)
+    
+    # 创建 label 数组，初始为 0
+    refined_labels = np.zeros_like(entropy_norm, dtype=int)
+    
+    # 找到 entropy_norm 大于 threshold 的位置，并将对应的 label 设置为 1
+    refined_labels[entropy_norm > threshold] = -1
+    
+    ###################################################################
     indices = (indices-np.mean(indices))/np.std(indices)
     X = np.stack((indices,entropy_norm),axis=-1)
+    """
     # 初始化 HDBSCAN
     clusterer = hdbscan.HDBSCAN(min_cluster_size=5)
     clusterer.fit(X)
@@ -271,7 +282,7 @@ def hdbscan_with_custom_merge(entropy, dir, rollout_id, plot=True):
         cluster_points = X[initial_labels == label]
         
         # 判断当前簇的第二个特征的值是否全部小于 0
-        if  np.all(cluster_points[:, 1] < 1):
+        if  np.all(cluster_points[:, 1] < threshold):
             refined_labels[initial_labels == label] = 0  # 合并到第 0 类
         else:
             refined_labels[initial_labels == label] = -1  # 合并到第 1 类
@@ -289,7 +300,7 @@ def hdbscan_with_custom_merge(entropy, dir, rollout_id, plot=True):
         os.makedirs(os.path.join(dir, "plot"), exist_ok=True)
         plt.savefig(os.path.join(dir, f"plot/rollout{rollout_id}-entropy-curve.png"))
         plt.close()
-
+    
     # 可视化初步聚类结果
     if plot:
         plt.figure(figsize=(10, 6))
@@ -301,7 +312,7 @@ def hdbscan_with_custom_merge(entropy, dir, rollout_id, plot=True):
         os.makedirs(os.path.join(dir, "plot"), exist_ok=True)
         plt.savefig(os.path.join(dir, f"plot/rollout{rollout_id}-hdbscan-raw.png"))
         plt.close()
-
+    """
     # 可视化合并后的结果
     if plot:
         plt.figure(figsize=(10, 6))
@@ -312,6 +323,9 @@ def hdbscan_with_custom_merge(entropy, dir, rollout_id, plot=True):
         plt.xlabel('Feature 1')
         plt.ylabel('Feature 2')
         plt.grid(True)
+        file_path = os.path.join(dir, f"plot")
+        if not os.path.exists(file_path):
+            os.makedirs(file_path)
         plt.savefig(os.path.join(dir, f"plot/rollout{rollout_id}-hdbscan-refine.png"))
         plt.close()
     return np.abs(refined_labels)

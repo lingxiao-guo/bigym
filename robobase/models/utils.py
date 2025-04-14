@@ -31,16 +31,15 @@ class MultiViewPatchEmbed(nn.Module):
         # x: [B, V, C, H, W], where V is the number of viewpoints
         # Make sure that x has the above shape
         assert len(x.shape) == 5
-        num_views = x.shape[1]
-
+        B, num_views, C,H,W = x.shape
         # Convert to [B * V, C, H, W]
-        x = torch.cat(torch.split(x, num_views, dim=1), dim=0)
-
+        x = x.reshape(B*num_views,C,H,W)
         # Embed patches to [B * V, L, C]
         x = self.patch_embed(x)
 
         # Convert to [B, V, L, C]
-        x = torch.stack(torch.split(x, num_views, dim=0), dim=1)
+        L,C = x.shape[-2],x.shape[-1]
+        x = x.reshape(B, num_views,L,C)
         return x
 
 
@@ -58,7 +57,7 @@ class MultiViewConvEmbed(nn.Module):
         """
         super().__init__()
         # Check whether patch size is the power of 2
-        assert (patch_size & (patch_size - 1)) == 0
+        # assert (patch_size & (patch_size - 1)) == 0
         num_layers = int(np.log2(patch_size))
 
         if not isinstance(img_size, tuple):
@@ -89,16 +88,18 @@ class MultiViewConvEmbed(nn.Module):
     def forward(self, x):
         # x: [B, V, C, H, W], where V is the number of viewpoints
         # Make sure that x has the above shape
+        print(x.shape)
         assert len(x.shape) == 5
         B, V = x.shape[:2]
 
         # Convert to [B * V, C, H, W]
         x = torch.reshape(x, ([B * V, *x.shape[2:]]))
-
+        print(x.shape)
         # Process through early convolution layers
         x = self.layers(x)
+        print(x.shape)
         x = self.proj(x)
-
+        print(x.shape)
         # Flatten to [B * V, C, L]
         x = x.flatten(2)
 
@@ -107,6 +108,7 @@ class MultiViewConvEmbed(nn.Module):
 
         # Convert to [B, V, L, C]
         x = torch.reshape(x, ([B, V, *x.shape[1:]]))
+        print(x.shape)
         return x
 
 

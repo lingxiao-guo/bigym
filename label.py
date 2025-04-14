@@ -10,6 +10,7 @@ def main(cfg):
     from robobase.workspace import Workspace
 
     root_dir = Path.cwd()
+    cfg.wandb.use=False
     workspace = Workspace(cfg)
     # snapshot = root_dir/'exp_local/pixel_act/bigym_put_cups_20241225051343/snapshots/latest_snapshot.pt'
     # sandwich remove: 'exp_local/pixel_act/bigym_sandwich_remove_20241217133401/snapshots/20000_snapshot.pt'

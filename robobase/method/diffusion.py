@@ -31,6 +31,7 @@ class Actor(nn.Module):
         actor_model: FullyConnectedModule,
         noise_scheduler: SchedulerMixin,
         num_diffusion_iters: int,
+        num_inference_steps: int,
     ):
         super().__init__()
         assert len(action_space.shape) == 2
@@ -38,6 +39,7 @@ class Actor(nn.Module):
         self.actor = actor_model
         self.noise_scheduler = noise_scheduler
         self.num_diffusion_iters = num_diffusion_iters
+        self.num_inference_steps = num_inference_steps
         self.sequence_length = action_space.shape[0]
         self.action_dim = action_space.shape[1]
         self.ema = EMAModel(
@@ -45,6 +47,7 @@ class Actor(nn.Module):
             power=0.75,
         )
         self.ema_actor = copy.deepcopy(self.actor)
+        self.prior = None
 
     @property
     def preferred_optimiser(self) -> callable:
@@ -56,7 +59,6 @@ class Actor(nn.Module):
 
     def _combine(self, low_dim_obs, fused_view_feats):
         flat_feats = []
-        low_dim_obs[:] = 0
         if low_dim_obs is not None:
             flat_feats.append(low_dim_obs)
         if fused_view_feats is not None:
@@ -93,24 +95,28 @@ class Actor(nn.Module):
         noise_pred = self.actor(net_ins)
         return noise_pred, noise
 
-    def infer(self, low_dim_obs, fused_view_feats) -> tuple[torch.Tensor, torch.Tensor]:
+    def infer(self, low_dim_obs, fused_view_feats, test=False) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Inverse process for inference.
         """
         obs_features = self._combine(low_dim_obs, fused_view_feats)
         with torch.no_grad():
-            # ema averaged model
-            actor = self.ema_actor
-            self.ema.copy_to(actor.parameters())
+            actor = self.actor
+            # actor = self.ema_actor
+            # self.ema.copy_to(actor.parameters())
 
             # initialize action from Gaussian noise
-            b = 1
+            b = low_dim_obs.shape[0]
+            if self.prior is None:
+                self.prior = torch.randn(
+                (b, self.sequence_length, self.action_dim), device=obs_features.device
+                )
             noisy_action = torch.randn(
                 (b, self.sequence_length, self.action_dim), device=obs_features.device
-            )
+                )
 
             # init scheduler
-            self.noise_scheduler.set_timesteps(self.num_diffusion_iters)
+            self.noise_scheduler.set_timesteps(self.num_inference_steps)
 
             for k in self.noise_scheduler.timesteps:
                 net_ins = {
@@ -130,20 +136,18 @@ class Actor(nn.Module):
 
 
 class Diffusion(BC):
-    def __init__(self, num_diffusion_iters: int, *args, **kwargs):
+    def __init__(self, num_diffusion_iters: int,num_inference_steps: int, *args, **kwargs):
         if not kwargs["frame_stack_on_channel"]:
             raise NotImplementedError(
                 "frame_stack_on_channel must be true for diffusion policies."
             )
         self.num_diffusion_iters = num_diffusion_iters
-        self.noise_scheduler = DDPMScheduler(
+        self.num_inference_steps = num_inference_steps
+        self.noise_scheduler = DDIMScheduler(
             num_train_timesteps=num_diffusion_iters,
             # the choise of beta schedule has big impact on performance
             # we found squared cosine works the best
             beta_schedule="squaredcos_cap_v2",
-            beta_start = 0.0001,
-            beta_end = 0.02,
-            variance_type = "fixed_small",
             # clip output to [-1,1] to improve stability
             clip_sample=True,
             # our network predicts noise (instead of denoised action)
@@ -166,6 +170,7 @@ class Diffusion(BC):
             self.actor_model,
             self.noise_scheduler,
             self.num_diffusion_iters,
+            self.num_inference_steps
         ).to(self.device)
         self.actor_opt = (self.actor.preferred_optimiser)(lr=self.lr)
 
@@ -208,6 +213,33 @@ class Diffusion(BC):
                 fused_rgb_feats = self.view_fusion(multi_view_rgb_feats)
         _, noisy_action = self.actor.infer(low_dim_obs, fused_rgb_feats)
         return noisy_action.detach()
+    
+    def _sample(self, observations: dict[str, torch.Tensor], eval_mode: bool, num_samples=50):
+        low_dim_obs = fused_rgb_feats = None
+        if self.low_dim_size > 0:
+            low_dim_obs = flatten_time_dim_into_channel_dim(
+                extract_from_spec(observations, "low_dim_state").unsqueeze(0)
+            )
+        if self.use_pixels:
+            rgb_obs = flatten_time_dim_into_channel_dim(
+                stack_tensor_dictionary(
+                    extract_many_from_spec(observations, r"rgb.*"), 0
+                ).unsqueeze(0),
+                has_view_axis=True,
+            )
+            with torch.no_grad():
+                multi_view_rgb_feats = self.encoder(rgb_obs.float())
+                fused_rgb_feats = self.view_fusion(multi_view_rgb_feats)
+        bs = low_dim_obs.shape[0]
+        low_dim_obs = torch.repeat_interleave(low_dim_obs, num_samples, dim=0)
+        fused_rgb_feats = torch.repeat_interleave(fused_rgb_feats, num_samples, dim=0)
+        _, noisy_action = self.actor.infer(low_dim_obs, fused_rgb_feats, test=True)
+        noisy_action = noisy_action.reshape(num_samples, bs, -1, noisy_action.shape[-1])
+        return noisy_action.detach()
+    
+    def sample(self, observations: dict[str, torch.Tensor], eval_mode: bool):
+        with torch.no_grad():
+            return self._sample(observations, eval_mode)
 
     def update_actor(self, low_dim_obs, fused_view_feats, action, loss_coeff):
         metrics = dict()

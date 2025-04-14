@@ -143,6 +143,7 @@ class Workspace:
             raise ValueError("replay.nstep != 1 is not supported for IL methods")
 
         self.cfg = cfg
+        
         utils.set_seed_everywhere(cfg.seed)
         dev = "cpu"
         if cfg.num_gpus > 0:
@@ -174,14 +175,14 @@ class Workspace:
         else:
             self.train_envs = None
             logging.warning("Train env is not created. Training will not be supported ")
-
+        
         # Create evaluation environment
         self.eval_env = self.env_factory.make_eval_env(cfg, self.work_dir)
 
         if num_demos != 0:
             # Post-process demos using the information from environments
             self.env_factory.post_collect_or_fetch_demos(cfg, self.work_dir)
-
+        
         # Create the RL Agent
         observation_space = self.eval_env.observation_space
         action_space = self.eval_env.action_space
@@ -274,6 +275,7 @@ class Workspace:
             "best_episode_success": 0,  # 默认值为 0
             "best_episode_len": 0,  # 默认值为 0
         }
+        self.threshold=cfg.threshold
 
     @property
     def pretrain_steps(self):
@@ -379,10 +381,11 @@ class Workspace:
                 if "agent_act_info" in env_metrics:
                     if hasattr(self.eval_env, "give_agent_info"):
                         self.eval_env.give_agent_info(env_metrics["agent_act_info"])
-                self.eval_video_recorder.record(self.eval_env)
+                # self.eval_video_recorder.record(self.eval_env)
+                self.eval_video_recorder.frames.extend(info['frame'])
                 total_reward += reward
                 step += 1
-                t += 1
+                t += info['sub_time_count']
             if episode == 0:
                 first_rollout = np.array(self.eval_video_recorder.frames)
             self.eval_video_recorder.save(f"{self.global_env_steps}-{episode}.mp4")
@@ -468,6 +471,7 @@ class Workspace:
             demo_env=True,
             train=False,
         )
+        DP=True
         while eval_until_episode(episode):
             demo = demos[episode]
             demo_entropy = []
@@ -493,8 +497,13 @@ class Workspace:
                 action_samples = self._perform_label_steps(obs, True)
                 B, H, D = action_samples[0].shape    
                 action_samples_temp = action_samples.permute(1,0,2,3).flatten(2)  
-                _,all_actions = KDE.kde_entropy(action_samples_temp)
-                all_actions = all_actions.reshape(B,H,D)        
+                if DP:
+                    if t % num_queries == 0:
+                        _,all_actions = KDE.kde_entropy(action_samples_temp)
+                        all_actions = all_actions.reshape(B,H,D)
+                else:    
+                    _,all_actions = KDE.kde_entropy(action_samples_temp)
+                    all_actions = all_actions.reshape(B,H,D)        
                 all_time_actions[[t], t : t + num_queries] = all_actions
                 all_time_samples[[t], t : t+ num_queries] = action_samples.permute(1,2,0,3)
                 actions_for_curr_step = all_time_actions[:, t]
@@ -508,15 +517,18 @@ class Workspace:
                 exp_weights = (
                     torch.from_numpy(exp_weights).cuda().unsqueeze(dim=1)
                 )
-                teacher_action = (actions_for_curr_step * exp_weights).sum(
-                    dim=0, keepdim=False
-                )
+                if DP:
+                    teacher_action = all_actions[0,t%num_queries]
+                else:
+                    teacher_action = (actions_for_curr_step * exp_weights).sum(
+                        dim=0, keepdim=False
+                    )
                 samples_for_curr_step = all_time_samples[:, t]
                 samples_for_curr_step = samples_for_curr_step[actions_populated]
                 # entropy = torch.mean(torch.std(samples_for_curr_step[:,:,:-2].flatten(0,1),dim=0),dim=-1)
                 entropy, _ = KDE.kde_entropy(samples_for_curr_step.flatten(0,1).unsqueeze(0))
                 demo_entropy.append(entropy.cpu().numpy())
-                teacher_actions.append(teacher_action.cpu().numpy())
+                teacher_actions.append(teacher_action.cpu().numpy().astype(np.float32))
                 frames = demo[t][0]
                 text = entropy.detach().cpu().numpy()
                 head_frame = utils.put_text(frames['rgb_head'].transpose((1,2,0)), "{:.{}e}".format(text, 2), font_size=1, resize=True)
@@ -528,6 +540,8 @@ class Workspace:
                 obs = next_obs
 
             print(f'Episode-{episode} labeled')
+            save_dir = os.path.join(self.work_dir,f'../bigym_{self.cfg.env.task_name}/entropy')
+            self.save_data(demo_entropy, save_dir, f'entropy_{episode}')
             labels = utils.hdbscan_with_custom_merge(demo_entropy, self.work_dir, episode)
             save_dir = os.path.join(self.work_dir,f'../bigym_{self.cfg.env.task_name}/labels')
             self.save_data(labels, save_dir, f'labels_{episode}')
@@ -552,18 +566,32 @@ class Workspace:
         print(f"Label saved to {file_path}")
     
     def load_labels(self):
-        dir_path = os.path.join(self.work_dir,f'../bigym_{self.cfg.env.task_name}/labels')
+        # dir_path = os.path.join(self.work_dir,f'../bigym_{self.cfg.env.task_name}/labels')
+        dir_path = os.path.join(self.work_dir,f'../bigym_{self.cfg.env.task_name}/entropy')
         self.labels = []
+        episode_len = []
+        precision_len = []
         episode = 0
-        while os.path.exists(os.path.join(dir_path,f'labels_{episode}.npy')):
+        """while os.path.exists(os.path.join(dir_path,f'labels_{episode}.npy')):
             file_path = os.path.join(dir_path, f'labels_{episode}.npy')
             self.labels.append(np.load(file_path))
+            episode += 1"""
+        while os.path.exists(os.path.join(dir_path,f'entropy_{episode}.npy')):
+            file_path = os.path.join(dir_path, f'entropy_{episode}.npy')
+            demo_entropy = np.load(file_path)
+            episode_len.append(len(demo_entropy))
+            labels = utils.hdbscan_with_custom_merge(demo_entropy, self.work_dir, episode, threshold=self.threshold)
+            precision_len.append(np.sum(labels == 0))
+            self.labels.append(labels)
             episode += 1
+        print('Precision rate:',np.sum(precision_len)/np.sum(episode_len))
+
     
     def load_teacher_actions(self):
         dir_path = os.path.join(self.work_dir,f'../bigym_{self.cfg.env.task_name}/teacher_actions')
         self.teacher_actions = []
         episode = 0
+        
         assert os.path.exists(os.path.join(dir_path,f'teacher_actions_{episode}.npy'))
         while os.path.exists(os.path.join(dir_path,f'teacher_actions_{episode}.npy')):
             file_path = os.path.join(dir_path, f'teacher_actions_{episode}.npy')
@@ -813,7 +841,7 @@ class Workspace:
                     k: v.unsqueeze(0) for k, v in torch_observations.items()
                 }
             action_samples = self.agent.sample(
-                torch_observations, self.main_loop_iterations, eval_mode=eval_mode
+                torch_observations, eval_mode=eval_mode
             )
 
         return action_samples

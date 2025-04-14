@@ -3,6 +3,7 @@ from bigym.action_modes import JointPositionActionMode
 from robobase.utils import DemoEnv, add_demo_to_replay_buffer
 from robobase.envs.utils.bigym_utils import TASK_MAP
 import gymnasium as gym
+import gc
 from gymnasium.wrappers import TimeLimit
 from robobase.envs.env import EnvFactory
 from robobase.envs.wrappers import (
@@ -28,7 +29,7 @@ from demonstrations.utils import Metadata
 from typing import List, Dict, Tuple, Callable
 import copy
 from tqdm import tqdm
-
+import torch
 UNIT_TEST = False
 
 
@@ -212,6 +213,7 @@ class BiGymEnvFactory(EnvFactory):
         self._raw_demos = demos
         self._action_stats = self._compute_action_stats(cfg, demos)
         self._obs_stats = self._compute_obs_stats(cfg, demos)
+        
 
     def post_collect_or_fetch_demos(self, cfg: DictConfig, work_dir: str):
         demo_list = [demo.timesteps for demo in self._raw_demos]
@@ -363,25 +365,40 @@ class BiGymEnvFactory(EnvFactory):
         return action_stats
 
     def _compute_obs_stats(self, cfg: DictConfig, demos: List[List[DemoStep]]) -> Dict:
+        # 提取所有观察值
         obs = []
         for demo in demos:
             for step in demo.timesteps:
                 obs.append(step.observation)
-
+        
+        # 获取观察值的键
         keys = obs[0].keys()
-        obs = {key: np.stack([o[key] for o in obs], axis=0) for key in keys}
-        obs_mean = {key: np.mean(obs[key], 0) for key in keys}
-        obs_std = {key: np.std(obs[key], 0) for key in keys}
-        obs_min = {key: np.min(obs[key], 0) for key in keys}
-        obs_max = {key: np.max(obs[key], 0) for key in keys}
+        
+        # 使用 PyTorch 处理数据
+        obs_torch = {key: torch.stack([torch.tensor(o[key]) for o in obs], dim=0) for key in keys}
+        
+        # 计算均值、标准差、最大值和最小值
+        obs_mean = {key: torch.mean(obs_torch[key], dim=0) for key in keys}
+        obs_std = {key: torch.std(obs_torch[key], dim=0) for key in keys}
+        obs_min = {key: torch.min(obs_torch[key], dim=0).values for key in keys}
+        obs_max = {key: torch.max(obs_torch[key], dim=0).values for key in keys}
+        
+        # 将 PyTorch 张量转换为 NumPy 数组
+        obs_mean_np = {key: value.numpy() for key, value in obs_mean.items()}
+        obs_std_np = {key: value.numpy() for key, value in obs_std.items()}
+        obs_min_np = {key: value.numpy() for key, value in obs_min.items()}
+        obs_max_np = {key: value.numpy() for key, value in obs_max.items()}
+        
+        # 返回统计结果
         obs_stats = {
-            "mean": obs_mean,
-            "std": obs_std,
-            "max": obs_max,
-            "min": obs_min,
+            "mean": obs_mean_np,
+            "std": obs_std_np,
+            "max": obs_max_np,
+            "min": obs_min_np,
         }
+        
         return obs_stats
-
+    
     def _get_gripper_action_stats(
         self, cfg: DictConfig
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:

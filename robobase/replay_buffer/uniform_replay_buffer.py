@@ -65,47 +65,23 @@ def load_episode(fn: Path):
 def downsample_action_with_labels(action, label):
     low_v = 2
     high_v = 4
-    middle_v = (low_v+high_v)//2
-    
     horizon, dim = action.shape
+    current_action = action
+    current_label = label
     indices = []
-    i = 0  # 修正初始索引为0
-    
+    i = -2
     while i < horizon:
-        if label[i] == 0:
-            # 低速模式：直接采样并移动1步
+        if i + high_v < horizon and np.all(current_label[i:i + high_v] == 1):
+            i += high_v
             indices.append(i)
+        elif i + low_v < horizon:
             i += low_v
+            indices.append(i)
         else:
-            # 进入高速区域：动态计算最佳步长
-            start = i
-            # 计算连续高速区域的长度
-            while i < horizon and label[i] == 1:
-                i += 1
-            seg_length = i - start
-            
-            # 动态分段处理（含过渡逻辑）
-            ptr = start
-            while ptr < start + seg_length:
-                remaining = start + seg_length - ptr
-                
-                # 速度过渡策略（可根据需要调整系数）
-                if ptr == start and start > 0 and label[start-1] == 0:
-                    # 过渡区开始：使用中等速度
-                    step = min(middle_v, remaining)
-                elif remaining >= high_v:
-                    # 稳定高速区：使用标准高速步长
-                    step = high_v
-                else:
-                    # 尾部处理：使用剩余最大可能步长
-                    step = max(1, min(remaining, high_v-1))
-                
-                indices.append(ptr)
-                ptr += step
-    
-    new_actions = action[indices]
-    
-    return new_actions
+            i = horizon
+
+    new_actions = current_action[indices]
+    return new_actions, indices
 
 def get_mix_actions(teacher_action, action, label):
     # 将 label 转换为布尔类型的列向量 (n, 1)，方便广播
@@ -854,14 +830,36 @@ class UniformReplayBuffer(ReplayBuffer):
         # action_seq = episode[ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)]
         # distill 
         if self.distill_flag:
-            action_seq = episode[TEACHER_ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)] 
+            # action_seq = episode[TEACHER_ACTION][action_start_idx:][1::2][:(action_end_idx-action_start_idx)]
+            # 原始切片操作
+            N = action_end_idx - action_start_idx
+            # action_seq = episode[TEACHER_ACTION][action_idxs]
+            action_seq = np.concatenate([
+                episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][:-2][::2],
+                episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][-2:]
+            ]).astype(np.float32)
+           
+            # action_seq = episode[TEACHER_ACTION][action_start_idx:][:(action_end_idx-action_start_idx)*2][::2].astype(np.float32)
         if self.mix_flag:
             action_seq = episode[MIX_ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)]
         # entropy piecewise
         if self.label_flag:
           label = label[action_start_idx:]
-          action_seq =  episode[TEACHER_ACTION][action_start_idx:] if self.teacher_actions is not None else episode[ACTION][action_start_idx:]
-          action_seq = downsample_action_with_labels(action_seq,label.copy())[:(action_end_idx-action_start_idx)] 
+          origin_action_seq =  episode[TEACHER_ACTION][action_start_idx:] if self.teacher_actions is not None else episode[ACTION][action_start_idx:]
+          action_seq, indices = downsample_action_with_labels(origin_action_seq,label.copy())
+          # action_seq = action_seq[:(action_end_idx-action_start_idx)] 
+          # slowlast:
+          if len(indices)>1:
+            if len(indices) == 2:
+                indices = indices # corner case bug
+            else:
+                indices = indices[:(action_end_idx-action_start_idx)]
+            last_second_action_idx = indices[-2]
+            last_action_idx = last_second_action_idx+1
+            # print(indices)
+            action_seq = np.concatenate((origin_action_seq[indices[:-1]],origin_action_seq[[last_action_idx]]),axis=0)
+        
+          
         # - Pad zeros to the end if action_sequences exceeds eps_len
         if len(action_seq) < self._action_seq_len:
             num_action_to_pad = self._action_seq_len - len(action_seq)

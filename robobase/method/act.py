@@ -369,7 +369,7 @@ class ActBCAgent(BC):
 
         return action
     
-    def sample(self, obs: dict[str, torch.Tensor], step: int, eval_mode: bool):
+    def sample(self, obs: dict[str, torch.Tensor],  eval_mode: bool):
         if self.low_dim_size > 0:
             qpos = flatten_time_dim_into_channel_dim(
                 extract_from_spec(obs, "low_dim_state").unsqueeze(0)

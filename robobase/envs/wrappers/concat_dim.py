@@ -56,6 +56,7 @@ class ConcatDim(gym.ObservationWrapper, gym.utils.RecordConstructorArgs):
         dim = self._dim - int(final)
         new_obs = {}
         combined = []
+        combined_keys = []
         for k, v in observation.items():
             # We allow normalizing observations in the ConcatDim wrapper
             # because all obs stats are stored with original key names and
@@ -65,8 +66,9 @@ class ConcatDim(gym.ObservationWrapper, gym.utils.RecordConstructorArgs):
                 if self._norm_obs and k in self._obs_stats:
                     v = (v - self._obs_stats["mean"][k]) / self._obs_stats["std"][k]
                 combined.append(v)
+                combined_keys.append(k)
             else:
-                new_obs[k] = v            
+                new_obs[k] = v          
         new_obs[self._new_name] = np.concatenate(combined, dim)
         return new_obs
 
