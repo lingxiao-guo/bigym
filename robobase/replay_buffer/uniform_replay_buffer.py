@@ -89,7 +89,44 @@ def get_mix_actions(teacher_action, action, label):
     # 根据 mask 选择对应的行，True 选 teacher_action，False 选 action
     new_action = np.where(mask, teacher_action, action)
     return new_action
+
+from scipy.interpolate import interp1d
+def interpolate_1d(target_time_steps: np.ndarray, source_timestamps: np.ndarray, source_values: np.ndarray):
+    # Create the interpolation function for all columns simultaneously
+    f = interp1d(source_timestamps, source_values, kind='linear', axis=0, fill_value="extrapolate")
+
+    # Perform the interpolation
+    interpolated_states = f(target_time_steps)
+
+    return interpolated_states
+
+
+
+def downsample(X, rate=1.5):
+    """
+    对输入的 NumPy 向量 X 沿着 T 维度进行降采样。
     
+    参数:
+    X (np.ndarray): 输入向量，形状为 [T, dim]
+    rate (float): 降采样率，例如 1.5 表示 1.5 倍速降采样
+    
+    返回:
+    np.ndarray: 降采样后的向量
+    """
+    T, dim = X.shape
+    
+    # 计算新的时间点数量
+    new_T = int(np.ceil(T / rate))
+    
+    # 生成原始时间点和新时间点
+    original_time = np.arange(T)
+    new_time = np.linspace(0, T - 1, new_T)
+       
+    new_X = interpolate_1d(new_time, original_time, X)
+    
+    return new_X.astype(np.float32)
+
+
 
 class UniformReplayBuffer(ReplayBuffer):
     """A simple out-of-graph Replay Buffer.
@@ -835,9 +872,10 @@ class UniformReplayBuffer(ReplayBuffer):
             N = action_end_idx - action_start_idx
             # action_seq = episode[TEACHER_ACTION][action_idxs]
             action_seq = np.concatenate([
-                episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][:-2][::2],
-                episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][-2:]
+                episode[ACTION][action_start_idx:][:(2*N-2)][:-2][::2],
+                episode[ACTION][action_start_idx:][:(2*N-2)][-2:]
             ]).astype(np.float32)
+            # action_seq = downsample(episode[TEACHER_ACTION][action_start_idx:],rate=1.5)[:(action_end_idx-action_start_idx)]
            
             # action_seq = episode[TEACHER_ACTION][action_start_idx:][:(action_end_idx-action_start_idx)*2][::2].astype(np.float32)
         if self.mix_flag:

@@ -23,7 +23,7 @@ is_imitation_learning: true
 action_repeat: 1
 action_sequence: 24
 execution_length: ${action_sequence}
-temporal_ensemble: true
+temporal_ensemble: false
 use_standardization: false  # Demo-based standardization for action space
 use_min_max_normalization: true  # Demo-based min-max normalization for action space
 min_max_margin: 0
@@ -45,8 +45,8 @@ policy_class: diffusion
 wandb:  # weight and bias
   use: true
   project: dp_bigym_qz17
-  name: dp_bigym_${env.task_name}_seq_${action_sequence}_label_${label}_distill_${distill}_slowlast_highv4
-
+  name: dp_bigym_${env.task_name}_data_seq_${action_sequence}_label_${label}_distill_${distill}_DDIM
+ 
 hydra:
   run:
-    dir: ../exp_local/pixel_dp/bigym_${env.task_name}_seq_${action_sequence}_label_${label}_distill_${distill}_DDIM
+    dir: ../exp_local/pixel_dp/bigym_${env.task_name}_data_seq_${action_sequence}_label_${label}_distill_${distill}_DDIM

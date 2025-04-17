@@ -471,7 +471,7 @@ class Workspace:
             demo_env=True,
             train=False,
         )
-        DP=True
+        
         while eval_until_episode(episode):
             demo = demos[episode]
             demo_entropy = []
@@ -497,13 +497,8 @@ class Workspace:
                 action_samples = self._perform_label_steps(obs, True)
                 B, H, D = action_samples[0].shape    
                 action_samples_temp = action_samples.permute(1,0,2,3).flatten(2)  
-                if DP:
-                    if t % num_queries == 0:
-                        _,all_actions = KDE.kde_entropy(action_samples_temp)
-                        all_actions = all_actions.reshape(B,H,D)
-                else:    
-                    _,all_actions = KDE.kde_entropy(action_samples_temp)
-                    all_actions = all_actions.reshape(B,H,D)        
+                _,all_actions = KDE.kde_entropy(action_samples_temp)
+                all_actions = all_actions.reshape(B,H,D)        
                 all_time_actions[[t], t : t + num_queries] = all_actions
                 all_time_samples[[t], t : t+ num_queries] = action_samples.permute(1,2,0,3)
                 actions_for_curr_step = all_time_actions[:, t]
@@ -517,12 +512,9 @@ class Workspace:
                 exp_weights = (
                     torch.from_numpy(exp_weights).cuda().unsqueeze(dim=1)
                 )
-                if DP:
-                    teacher_action = all_actions[0,t%num_queries]
-                else:
-                    teacher_action = (actions_for_curr_step * exp_weights).sum(
+                teacher_action = (actions_for_curr_step * exp_weights).sum(
                         dim=0, keepdim=False
-                    )
+                )
                 samples_for_curr_step = all_time_samples[:, t]
                 samples_for_curr_step = samples_for_curr_step[actions_populated]
                 # entropy = torch.mean(torch.std(samples_for_curr_step[:,:,:-2].flatten(0,1),dim=0),dim=-1)
@@ -711,7 +703,8 @@ class Workspace:
             else:
                 self.labels = None
             if self.cfg.distill:
-                self.load_teacher_actions()
+                self.teacher_actions = None
+                # self.load_teacher_actions()
                 self.replay_buffer._set_teacher_actions(self.teacher_actions)
             else:
                 self.teacher_actions = None

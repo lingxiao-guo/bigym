@@ -153,6 +153,20 @@ class Diffusion(BC):
             # our network predicts noise (instead of denoised action)
             prediction_type="epsilon",
         )
+        """
+        self.noise_scheduler = DDPMScheduler(
+            num_train_timesteps=num_diffusion_iters,
+            # the choise of beta schedule has big impact on performance
+            # we found squared cosine works the best
+            beta_schedule="squaredcos_cap_v2",
+            beta_start = 0.0001,
+            beta_end = 0.02,
+            variance_type = "fixed_small",
+            # clip output to [-1,1] to improve stability
+            clip_sample=True,
+            # our network predicts noise (instead of denoised action)
+            prediction_type="epsilon",
+        )"""
         super().__init__(*args, **kwargs)
 
     def build_actor(self):
