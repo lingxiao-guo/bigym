@@ -59,6 +59,8 @@ class Actor(nn.Module):
 
     def _combine(self, low_dim_obs, fused_view_feats):
         flat_feats = []
+        # mask proprioception to prevent overfit
+        # low_dim_obs[:] = 0
         if low_dim_obs is not None:
             flat_feats.append(low_dim_obs)
         if fused_view_feats is not None:
@@ -143,6 +145,7 @@ class Diffusion(BC):
             )
         self.num_diffusion_iters = num_diffusion_iters
         self.num_inference_steps = num_inference_steps
+        
         self.noise_scheduler = DDIMScheduler(
             num_train_timesteps=num_diffusion_iters,
             # the choise of beta schedule has big impact on performance

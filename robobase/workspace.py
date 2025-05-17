@@ -558,16 +558,17 @@ class Workspace:
         print(f"Label saved to {file_path}")
     
     def load_labels(self):
-        # dir_path = os.path.join(self.work_dir,f'../bigym_{self.cfg.env.task_name}/labels')
-        dir_path = os.path.join(self.work_dir,f'../bigym_{self.cfg.env.task_name}/entropy')
+        dir_path = os.path.join(self.work_dir,f'../bigym_{self.cfg.env.task_name}/labels')
+        # dir_path = os.path.join(self.work_dir,f'../bigym_{self.cfg.env.task_name}/entropy')
         self.labels = []
         episode_len = []
         precision_len = []
         episode = 0
-        """while os.path.exists(os.path.join(dir_path,f'labels_{episode}.npy')):
+        while os.path.exists(os.path.join(dir_path,f'labels_{episode}.npy')):
             file_path = os.path.join(dir_path, f'labels_{episode}.npy')
             self.labels.append(np.load(file_path))
-            episode += 1"""
+            episode += 1
+        """
         while os.path.exists(os.path.join(dir_path,f'entropy_{episode}.npy')):
             file_path = os.path.join(dir_path, f'entropy_{episode}.npy')
             demo_entropy = np.load(file_path)
@@ -577,6 +578,7 @@ class Workspace:
             self.labels.append(labels)
             episode += 1
         print('Precision rate:',np.sum(precision_len)/np.sum(episode_len))
+        """
 
     
     def load_teacher_actions(self):
@@ -704,17 +706,11 @@ class Workspace:
                 self.labels = None
             if self.cfg.distill:
                 self.teacher_actions = None
-                # self.load_teacher_actions()
+                self.load_teacher_actions()
                 self.replay_buffer._set_teacher_actions(self.teacher_actions)
             else:
                 self.teacher_actions = None
-            if self.cfg.mix:
-                if not self.cfg.label:
-                    self.load_labels()
-                    self.replay_buffer._set_labels(self.labels)
-                if not self.cfg.distill:
-                    self.load_teacher_actions()
-                    self.replay_buffer._set_teacher_actions(self.teacher_actions)
+            
 
             self.replay_buffer.set_flag(label=self.cfg.label,distill=self.cfg.distill,mix=self.cfg.mix)
             if self.use_demo_replay:

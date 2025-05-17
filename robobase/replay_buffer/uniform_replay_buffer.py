@@ -62,7 +62,9 @@ def load_episode(fn: Path):
         episode = {k: episode[k] for k in episode.keys()}
         return episode
 
-def downsample_action_with_labels(action, label):
+
+
+def downsample_action_with_labels(action, label, chunk_len):
     low_v = 2
     high_v = 4
     horizon, dim = action.shape
@@ -70,7 +72,8 @@ def downsample_action_with_labels(action, label):
     current_label = label
     indices = []
     i = -2
-    while i < horizon:
+    # 循环时检查索引有效性
+    while len(indices) < chunk_len - 2:
         if i + high_v < horizon and np.all(current_label[i:i + high_v] == 1):
             i += high_v
             indices.append(i)
@@ -78,8 +81,21 @@ def downsample_action_with_labels(action, label):
             i += low_v
             indices.append(i)
         else:
-            i = horizon
-
+            i += 1
+        if i >= horizon:  # 超出范围则终止循环
+            indices.append(horizon-1)
+            break
+        
+        
+    # 处理循环后的追加逻辑
+    if indices:  # 确保indices非空
+        last_i = indices[-1]
+        # 严格检查i+1和i+2的有效性
+        if last_i + 1 < horizon:
+            indices.append(last_i + 1)
+        if last_i + 2 < horizon:
+            indices.append(last_i + 2)
+    
     new_actions = current_action[indices]
     return new_actions, indices
 
@@ -865,6 +881,7 @@ class UniformReplayBuffer(ReplayBuffer):
         ################################## ACCELERATE #####################################
         # constant
         # action_seq = episode[ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)]
+        origin_action_seq =  episode[TEACHER_ACTION][action_start_idx:] if self.teacher_actions is not None else episode[ACTION][action_start_idx:]
         # distill 
         if self.distill_flag:
             # action_seq = episode[TEACHER_ACTION][action_start_idx:][1::2][:(action_end_idx-action_start_idx)]
@@ -872,41 +889,28 @@ class UniformReplayBuffer(ReplayBuffer):
             N = action_end_idx - action_start_idx
             # action_seq = episode[TEACHER_ACTION][action_idxs]
             action_seq = np.concatenate([
-                episode[ACTION][action_start_idx:][:(2*N-2)][:-2][::2],
-                episode[ACTION][action_start_idx:][:(2*N-2)][-2:]
+                episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][:-2][::2],
+                episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][-2:]
             ]).astype(np.float32)
             # action_seq = downsample(episode[TEACHER_ACTION][action_start_idx:],rate=1.5)[:(action_end_idx-action_start_idx)]
            
             # action_seq = episode[TEACHER_ACTION][action_start_idx:][:(action_end_idx-action_start_idx)*2][::2].astype(np.float32)
-        if self.mix_flag:
-            action_seq = episode[MIX_ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)]
         # entropy piecewise
         if self.label_flag:
           label = label[action_start_idx:]
-          origin_action_seq =  episode[TEACHER_ACTION][action_start_idx:] if self.teacher_actions is not None else episode[ACTION][action_start_idx:]
-          action_seq, indices = downsample_action_with_labels(origin_action_seq,label.copy())
+          action_seq, indices = downsample_action_with_labels(origin_action_seq,label.copy(),self._action_seq_len)
           # action_seq = action_seq[:(action_end_idx-action_start_idx)] 
-          # slowlast:
-          if len(indices)>1:
-            if len(indices) == 2:
-                indices = indices # corner case bug
-            else:
-                indices = indices[:(action_end_idx-action_start_idx)]
-            last_second_action_idx = indices[-2]
-            last_action_idx = last_second_action_idx+1
-            # print(indices)
-            action_seq = np.concatenate((origin_action_seq[indices[:-1]],origin_action_seq[[last_action_idx]]),axis=0)
-        
           
-        # - Pad zeros to the end if action_sequences exceeds eps_len
+          
+        # - Pad to the end if action_sequences exceeds eps_len
         if len(action_seq) < self._action_seq_len:
             num_action_to_pad = self._action_seq_len - len(action_seq)
             action_seq = np.concatenate(
                 [
                     action_seq,
-                    np.zeros(
+                    np.ones(
                         (num_action_to_pad, *action_seq.shape[1:]), dtype=np.float32
-                    ),
+                    )*origin_action_seq[-1],
                 ],
                 axis=0,
             )
