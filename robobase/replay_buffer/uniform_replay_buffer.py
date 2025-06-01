@@ -908,7 +908,7 @@ class UniformReplayBuffer(ReplayBuffer):
             action_seq = np.concatenate(
                 [
                     action_seq,
-                    np.ones(
+                    np.zeros(
                         (num_action_to_pad, *action_seq.shape[1:]), dtype=np.float32
                     )*origin_action_seq[-1],
                 ],

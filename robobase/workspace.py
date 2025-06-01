@@ -508,7 +508,7 @@ class Workspace:
                 actions_for_curr_step = actions_for_curr_step[actions_populated]
                 k = 0.01
                 exp_weights = np.exp(-k * np.arange(len(actions_for_curr_step)))
-                exp_weights = exp_weights / exp_weights.sum()
+                exp_weights = (exp_weights / exp_weights.sum())
                 exp_weights = (
                     torch.from_numpy(exp_weights).cuda().unsqueeze(dim=1)
                 )
