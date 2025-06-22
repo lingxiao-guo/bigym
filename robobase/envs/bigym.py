@@ -208,7 +208,7 @@ class BiGymEnvFactory(EnvFactory):
 
     def collect_or_fetch_demos(self, cfg: DictConfig, num_demos: int):
         demos = self._get_demo_fn(cfg, num_demos)
-        demos = self.transform_base_action_to_abs(demos)
+        # demos = self.transform_base_action_to_abs(demos)
         self._raw_demos = demos
         self._action_stats = self._compute_action_stats(cfg, demos)
         self._obs_stats = self._compute_obs_stats(cfg, demos)
@@ -363,23 +363,39 @@ class BiGymEnvFactory(EnvFactory):
         return action_stats
 
     def _compute_obs_stats(self, cfg: DictConfig, demos: List[List[DemoStep]]) -> Dict:
+        import torch
+        # Using torch to accelerate calculation
         obs = []
         for demo in demos:
             for step in demo.timesteps:
                 obs.append(step.observation)
-
+        
+        # 获取观察值的键
         keys = obs[0].keys()
-        obs = {key: np.stack([o[key] for o in obs], axis=0) for key in keys}
-        obs_mean = {key: np.mean(obs[key], 0) for key in keys}
-        obs_std = {key: np.std(obs[key], 0) for key in keys}
-        obs_min = {key: np.min(obs[key], 0) for key in keys}
-        obs_max = {key: np.max(obs[key], 0) for key in keys}
+        
+        # 使用 PyTorch 处理数据
+        obs_torch = {key: torch.stack([torch.tensor(o[key]) for o in obs], dim=0) for key in keys}
+        
+        # 计算均值、标准差、最大值和最小值
+        obs_mean = {key: torch.mean(obs_torch[key], dim=0) for key in keys}
+        obs_std = {key: torch.std(obs_torch[key], dim=0) for key in keys}
+        obs_min = {key: torch.min(obs_torch[key], dim=0).values for key in keys}
+        obs_max = {key: torch.max(obs_torch[key], dim=0).values for key in keys}
+        
+        # 将 PyTorch 张量转换为 NumPy 数组
+        obs_mean_np = {key: value.numpy() for key, value in obs_mean.items()}
+        obs_std_np = {key: value.numpy() for key, value in obs_std.items()}
+        obs_min_np = {key: value.numpy() for key, value in obs_min.items()}
+        obs_max_np = {key: value.numpy() for key, value in obs_max.items()}
+        
+        # 返回统计结果
         obs_stats = {
-            "mean": obs_mean,
-            "std": obs_std,
-            "max": obs_max,
-            "min": obs_min,
+            "mean": obs_mean_np,
+            "std": obs_std_np,
+            "max": obs_max_np,
+            "min": obs_min_np,
         }
+        
         return obs_stats
 
     def _get_gripper_action_stats(

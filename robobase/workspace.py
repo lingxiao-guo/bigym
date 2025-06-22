@@ -853,8 +853,8 @@ class Workspace:
                         eval_metrics, self.pretrain_steps, prefix="pretrain_eval"
                     )
                 
-                if should_save_snapshot(self._pretrain_step):
-                    self.save_snapshot()
+                # if should_save_snapshot(self._pretrain_step):
+                #     self.save_snapshot()
 
                 self._pretrain_step += 1
 

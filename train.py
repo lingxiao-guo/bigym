@@ -1,7 +1,7 @@
 from pathlib import Path
 import os
 import hydra
-
+os.environ['WANDB_BASE_URL']='https://api.bandw.top'
 
 @hydra.main(
     config_path="robobase/cfgs", config_name="robobase_config", version_base=None

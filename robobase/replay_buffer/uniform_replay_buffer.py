@@ -61,7 +61,7 @@ def load_episode(fn: Path):
         episode = np.load(f)
         episode = {k: episode[k] for k in episode.keys()}
         return episode
-
+'''
 def downsample_action_with_labels(action, label):
     low_v = 2
     high_v = 4
@@ -105,6 +105,42 @@ def downsample_action_with_labels(action, label):
     
     new_actions = action[indices]
     
+    return new_actions
+
+'''
+def downsample_action_with_labels(action, label, chunk_len):
+    low_v = 2
+    high_v = 4
+    horizon, dim = action.shape
+    current_action = action
+    current_label = label
+    indices = []
+    i = -2
+    # 循环时检查索引有效性
+    while len(indices) < chunk_len - 2:
+        if i + high_v < horizon and np.all(current_label[i:i + high_v] == 1):
+            i += high_v
+            indices.append(i)
+        elif i + low_v < horizon:
+            i += low_v
+            indices.append(i)
+        else:
+            i += 1
+        if i >= horizon:  # 超出范围则终止循环
+            indices.append(horizon-1)
+            break
+        
+        
+    # 处理循环后的追加逻辑
+    if indices:  # 确保indices非空
+        last_i = indices[-1]
+        # 严格检查i+1和i+2的有效性
+        if last_i + 1 < horizon:
+            indices.append(last_i + 1)
+        if last_i + 2 < horizon:
+            indices.append(last_i + 2)
+    
+    new_actions = current_action[indices]
     return new_actions
 
 def get_mix_actions(teacher_action, action, label):
@@ -860,8 +896,8 @@ class UniformReplayBuffer(ReplayBuffer):
         # entropy piecewise
         if self.label_flag:
           label = label[action_start_idx:]
-          action_seq =  episode[TEACHER_ACTION][action_start_idx:] if self.teacher_actions is not None else episode[ACTION][action_start_idx:]
-          action_seq = downsample_action_with_labels(action_seq,label.copy())[:(action_end_idx-action_start_idx)] 
+          action_seq =  episode[TEACHER_ACTION][action_start_idx:] 
+          action_seq = downsample_action_with_labels(action_seq,label.copy(),self._action_seq_len)
         # - Pad zeros to the end if action_sequences exceeds eps_len
         if len(action_seq) < self._action_seq_len:
             num_action_to_pad = self._action_seq_len - len(action_seq)
