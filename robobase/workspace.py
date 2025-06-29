@@ -206,6 +206,7 @@ class Workspace:
             frame_stack_on_channel=cfg.frame_stack_on_channel,
             intrinsic_reward_module=intrinsic_reward_module,
         )
+        
         self.agent.train(False)
 
         self.replay_buffer = create_replay_fn(cfg, observation_space, action_space)
@@ -379,10 +380,11 @@ class Workspace:
                 if "agent_act_info" in env_metrics:
                     if hasattr(self.eval_env, "give_agent_info"):
                         self.eval_env.give_agent_info(env_metrics["agent_act_info"])
-                self.eval_video_recorder.record(self.eval_env)
+                # self.eval_video_recorder.record(self.eval_env)
+                self.eval_video_recorder.frames.extend(info['frame'])
                 total_reward += reward
                 step += 1
-                t += 1
+                t += info['sub_time_count']
             if episode == 0:
                 first_rollout = np.array(self.eval_video_recorder.frames)
             self.eval_video_recorder.save(f"{self.global_env_steps}-{episode}.mp4")
@@ -845,7 +847,6 @@ class Workspace:
                     self.logger.log_metrics(
                         pretrain_metrics, self.pretrain_steps, prefix="pretrain"
                     )
-
                 if should_pretrain_eval(self.pretrain_steps):
                     eval_metrics = self._eval(eval_record_all_episode=True)
                     eval_metrics.update(self._get_common_metrics())
@@ -966,6 +967,9 @@ class Workspace:
         ]
         payload = {k: self.__dict__[k] for k in keys_to_save}
         payload["agent"] = self.agent.state_dict()
+        if self.cfg.save_ema:
+            print("Save ema...")
+            payload["ema"] = self.agent.actor.ema.state_dict()
         with snapshot.open("wb") as f:
             torch.save(payload, f)
         latest_snapshot = self.work_dir / "snapshots" / "latest_snapshot.pt"
@@ -985,5 +989,8 @@ class Workspace:
         with path_to_snapshot_to_load.open("rb") as f:
             payload = torch.load(f, map_location="cpu")
         self.agent.load_state_dict(payload.pop("agent"))
+        if self.cfg.load_ema:
+            print("Load ema...")
+            self.agent.actor.ema.load_state_dict(payload.pop("ema"))
         for k, v in payload.items():
             self.__dict__[k] = v

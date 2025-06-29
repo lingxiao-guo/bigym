@@ -31,17 +31,18 @@ class MultiViewPatchEmbed(nn.Module):
         # x: [B, V, C, H, W], where V is the number of viewpoints
         # Make sure that x has the above shape
         assert len(x.shape) == 5
-        num_views = x.shape[1]
-
+        B, num_views, C,H,W = x.shape
         # Convert to [B * V, C, H, W]
-        x = torch.cat(torch.split(x, num_views, dim=1), dim=0)
-
+        x = x.reshape(B*num_views,C,H,W)
         # Embed patches to [B * V, L, C]
         x = self.patch_embed(x)
 
         # Convert to [B, V, L, C]
-        x = torch.stack(torch.split(x, num_views, dim=0), dim=1)
+        L,C = x.shape[-2],x.shape[-1]
+        x = x.reshape(B, num_views,L,C)
         return x
+
+
 
 
 class MultiViewConvEmbed(nn.Module):

@@ -13,7 +13,8 @@ batch_size: 256
 save_snapshot: true
 snapshot_every_n: 5000
 replay_size_before_train: 500
-
+save_ema: true
+load_ema: true
 pixels: true
 frame_stack: 1
 
@@ -43,9 +44,9 @@ mix: False
 wandb:  # weight and bias
   use: true
   project: dp_bigym_qz20
-  name: act_bigym_${env.task_name}_label_${label}_distill_${distill}_seq_${action_sequence}_prop_mask
+  name: act_bigym_${env.task_name}_label_${label}_distill_${distill}_seq_${action_sequence}
 
 
 hydra:
   run:
-    dir: ./exp_local/pixel_dp/bigym_${env.task_name}_DDPM_seed_${seed}_label_${label}_distill_${distill}_seq_${action_sequence}_prop_mask
+    dir: ./exp_local/pixel_dp/bigym_${env.task_name}_DDPM_seed_${seed}_label_${label}_distill_${distill}_seq_${action_sequence}

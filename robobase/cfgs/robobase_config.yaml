@@ -20,7 +20,8 @@ save_snapshot: true
 snapshot_every_n: 1000
 batch_size: 256
 is_imitation_learning: true
-
+save_ema: false
+load_ema: false
 # Demonstration settings
 demos: 100
 demo_batch_size: 256  # If set to > 0, introduce a separate buffer for demos

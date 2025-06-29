@@ -56,7 +56,6 @@ class Actor(nn.Module):
 
     def _combine(self, low_dim_obs, fused_view_feats):
         flat_feats = []
-        low_dim_obs[:] = 0
         if low_dim_obs is not None:
             flat_feats.append(low_dim_obs)
         if fused_view_feats is not None:

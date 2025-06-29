@@ -333,7 +333,7 @@ class EncoderMultiViewVisionTransformer(EncoderModule):
     def __init__(
         self,
         input_shape: Tuple[int, int, int, int],
-        patch_size: int,
+        patch_size: int=14,
         embed_dim: int = 256,
         depth: int = 4,
         num_heads: int = 4,
@@ -342,7 +342,7 @@ class EncoderMultiViewVisionTransformer(EncoderModule):
         decoder_num_heads: int = 4,
         mlp_ratio: float = 4.0,
         norm_layer: nn.Module = nn.LayerNorm,
-        conv_embed: bool = True,
+        conv_embed: bool = False,
         reward_pred: bool = True,
     ):
         """
@@ -456,8 +456,8 @@ class EncoderMultiViewVisionTransformer(EncoderModule):
         )
 
         # initialize patch_embed like nn.Linear (instead of nn.Conv2d)
-        w = self.patch_embed.proj.weight.data
-        torch.nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
+        # w = self.patch_embed.proj.weight.data
+        # torch.nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
 
         # timm's trunc_normal_(std=.02) is effectively normal_(std=0.02)
         # as cutoff is too big (2.)

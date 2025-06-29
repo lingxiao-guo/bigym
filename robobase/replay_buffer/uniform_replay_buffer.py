@@ -61,8 +61,8 @@ def load_episode(fn: Path):
         episode = np.load(f)
         episode = {k: episode[k] for k in episode.keys()}
         return episode
-'''
-def downsample_action_with_labels(action, label):
+
+def downsample_action_with_labels(action, label, chunk_len):
     low_v = 2
     high_v = 4
     middle_v = (low_v+high_v)//2
@@ -142,7 +142,7 @@ def downsample_action_with_labels(action, label, chunk_len):
     
     new_actions = current_action[indices]
     return new_actions
-
+'''
 def get_mix_actions(teacher_action, action, label):
     # 将 label 转换为布尔类型的列向量 (n, 1)，方便广播
     mask = label.astype(bool)[:, np.newaxis]

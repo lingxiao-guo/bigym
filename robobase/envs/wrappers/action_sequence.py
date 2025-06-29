@@ -58,6 +58,56 @@ class ActionSequence(gym.ActionWrapper, gym.utils.RecordConstructorArgs):
             )
         return self._step_sequence(action)
 
+def _render_single_env_if_vector(env: gym.vector.VectorEnv):
+    if getattr(env, "is_vector_env", False):
+        if getattr(env, "parent_pipes", False):
+            # Async env
+            old_parent_pipes = env.parent_pipes
+            env.parent_pipes = old_parent_pipes[:1]
+            img = env.call("render")[0]
+            env.parent_pipes = old_parent_pipes
+        elif getattr(env, "envs", False):
+            # Sync env
+            old_envs = env.envs
+            env.envs = old_envs[:1]
+            img = env.call("render")[0]
+            env.envs = old_envs
+        else:
+            raise ValueError("Unrecognized vector env.")
+    else:
+        img = env.render()
+    return img
+
+import cv2
+def put_text(img, text, is_waypoint=False, font_size=1, thickness=2, position="top"):
+    img = img.copy()
+    if position == "top":
+        p = (10, 30)
+    elif position == "bottom":
+        p = (10, img.shape[0] - 60)
+    # put the frame number in the top left corner
+    img = cv2.putText(
+        img,
+        str(text),
+        p,
+        cv2.FONT_HERSHEY_SIMPLEX,
+        font_size,
+        (0, 255, 255),
+        thickness,
+        cv2.LINE_AA,
+    )
+    if is_waypoint:
+        img = cv2.putText(
+            img,
+            "*",
+            (10, 60),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_size,
+            (255, 255, 0),
+            thickness,
+            cv2.LINE_AA,
+        )
+    return img
 
 class RecedingHorizonControl(ActionSequence):
     """Receding horizon control with temporal ensembling of ACT.
@@ -128,6 +178,8 @@ class RecedingHorizonControl(ActionSequence):
         self._action_history[
             self._cur_step, self._cur_step : self._cur_step + action.shape[0] # self._sequence_length
         ] = action
+        frames = []
+        sub_time_count = 0
         for i, sub_action in enumerate(action):
             if self._temporal_ensemble and self._sequence_length > 1:
                 # Select all predicted actions for self._cur_step. This will cover the
@@ -146,6 +198,11 @@ class RecedingHorizonControl(ActionSequence):
             observation, reward, termination, truncation, info = self.env.step(
                 sub_action
             )
+
+            img = _render_single_env_if_vector(self.env)
+            frames.append(img)
+            sub_time_count += 1
+
             self._cur_step += 1
             if self.is_demo_env:
                 demo_actions[i] = info.pop("demo_action")
@@ -167,6 +224,11 @@ class RecedingHorizonControl(ActionSequence):
         ).astype(int)
         if self.is_demo_env:
             info["demo_action"] = np.array(demo_actions)
+        img = frames[-1].copy()
+        img = put_text(img,'*',is_waypoint=True)
+        frames[-1] = img
+        info["frame"] = frames
+        info["sub_time_count"] = sub_time_count
         return (
             observation,
             total_reward,
