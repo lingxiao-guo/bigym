@@ -103,7 +103,7 @@ class Actor(nn.Module):
             self.ema.copy_to(actor.parameters())
 
             # initialize action from Gaussian noise
-            b = 1
+            b = low_dim_obs.shape[0]
             noisy_action = torch.randn(
                 (b, self.sequence_length, self.action_dim), device=obs_features.device
             )
@@ -207,6 +207,33 @@ class Diffusion(BC):
                 fused_rgb_feats = self.view_fusion(multi_view_rgb_feats)
         _, noisy_action = self.actor.infer(low_dim_obs, fused_rgb_feats)
         return noisy_action.detach()
+    
+    def _sample(self, observations: dict[str, torch.Tensor], eval_mode: bool, num_samples=50):
+        low_dim_obs = fused_rgb_feats = None
+        if self.low_dim_size > 0:
+            low_dim_obs = flatten_time_dim_into_channel_dim(
+                extract_from_spec(observations, "low_dim_state").unsqueeze(0)
+            )
+        if self.use_pixels:
+            rgb_obs = flatten_time_dim_into_channel_dim(
+                stack_tensor_dictionary(
+                    extract_many_from_spec(observations, r"rgb.*"), 0
+                ).unsqueeze(0),
+                has_view_axis=True,
+            )
+            with torch.no_grad():
+                multi_view_rgb_feats = self.encoder(rgb_obs.float())
+                fused_rgb_feats = self.view_fusion(multi_view_rgb_feats)
+        bs = low_dim_obs.shape[0]
+        low_dim_obs = torch.repeat_interleave(low_dim_obs, num_samples, dim=0)
+        fused_rgb_feats = torch.repeat_interleave(fused_rgb_feats, num_samples, dim=0)
+        _, noisy_action = self.actor.infer(low_dim_obs, fused_rgb_feats)
+        noisy_action = noisy_action.reshape(num_samples, bs, -1, noisy_action.shape[-1])
+        return noisy_action.detach()
+    
+    def sample(self, observations: dict[str, torch.Tensor], step:int, eval_mode: bool):
+        with torch.no_grad():
+            return self._sample(observations, eval_mode)
 
     def update_actor(self, low_dim_obs, fused_view_feats, action, loss_coeff):
         metrics = dict()

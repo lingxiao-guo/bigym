@@ -890,10 +890,14 @@ class UniformReplayBuffer(ReplayBuffer):
         # action_seq = episode[ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)]
         # distill 
         if self.distill_flag:
-            action_seq = episode[TEACHER_ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)] 
-        if self.mix_flag:
-            action_seq = episode[MIX_ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)]
-        # entropy piecewise
+            # action_seq = episode[TEACHER_ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)] 
+            N = action_end_idx - action_start_idx
+            # action_seq = episode[TEACHER_ACTION][action_idxs]
+            action_seq = np.concatenate([
+                episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][:-2][::2],
+                episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][-2:]
+            ]).astype(np.float32)
+        
         if self.label_flag:
           label = label[action_start_idx:]
           action_seq =  episode[TEACHER_ACTION][action_start_idx:] 
