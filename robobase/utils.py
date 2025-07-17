@@ -294,7 +294,7 @@ def hdbscan_with_custom_merge(entropy, dir, rollout_id, threshold=0,plot=True):
         # 找到所有离群点位置
         is_outlier = (labels == -1)
         diff = np.diff(is_outlier.astype(int))
-        
+         
         # 获取连续段的起止位置
         starts = np.where(diff == 1)[0] + 1
         ends = np.where(diff == -1)[0] + 1
