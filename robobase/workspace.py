@@ -89,6 +89,8 @@ def _create_default_envs(cfg: DictConfig) -> EnvFactory:
         from robobase.envs.bigym import BiGymEnvFactory
 
         factory = BiGymEnvFactory()
+        if cfg.speedup:
+            factory.HIGH_GAIN = True
     elif cfg.env.env_name == "d4rl":
         from robobase.envs.d4rl import D4RLEnvFactory
 
@@ -143,6 +145,13 @@ class Workspace:
             raise ValueError("replay.nstep != 1 is not supported for IL methods")
 
         self.cfg = cfg
+        if self.cfg.speedup:
+            self.cfg.action_sequence = self.cfg.action_sequence // 2
+            self.cfg.execution_length = self.cfg.execution_length // 2
+        if self.cfg.env.demo_down_sample_rate == 10: # High-frequence control uses longer action chunk
+            self.cfg.action_sequence *= 2
+            self.cfg.execution_length *= 2
+
         utils.set_seed_everywhere(cfg.seed)
         dev = "cpu"
         if cfg.num_gpus > 0:
@@ -185,7 +194,7 @@ class Workspace:
         # Create the RL Agent
         observation_space = self.eval_env.observation_space
         action_space = self.eval_env.action_space
-
+        print("Action Space: ", action_space)
         intrinsic_reward_module = None
         if cfg.get("intrinsic_reward_module", None):
             intrinsic_reward_module = hydra.utils.instantiate(
@@ -533,6 +542,7 @@ class Workspace:
             labels = utils.hdbscan_with_custom_merge(demo_entropy, self.work_dir, episode)
             save_dir = os.path.join(self.work_dir,f'../bigym_{self.cfg.env.task_name}/labels')
             self.save_data(labels, save_dir, f'labels_{episode}')
+            self.save_data(demo_entropy, save_dir, f'entropy_{episode}')
             teacher_actions = np.array(teacher_actions)
             save_dir = os.path.join(self.work_dir,f'../bigym_{self.cfg.env.task_name}/teacher_actions')
             self.save_data(teacher_actions, save_dir, f'teacher_actions_{episode}')
@@ -679,27 +689,23 @@ class Workspace:
     def _load_demos(self):
         if (num_demos := self.cfg.demos) != 0:
             # NOTE: Currently we do not protect demos from being evicted from replay
-            if self.cfg.label:
+            if self.cfg.speedup:
                 self.load_labels()
                 self.replay_buffer._set_labels(self.labels)
-            else:
-                self.labels = None
-            if self.cfg.distill:
                 self.load_teacher_actions()
                 self.replay_buffer._set_teacher_actions(self.teacher_actions)
             else:
+                self.labels = None
                 self.teacher_actions = None
-            if self.cfg.mix:
-                if not self.cfg.label:
-                    self.load_labels()
-                    self.replay_buffer._set_labels(self.labels)
-                if not self.cfg.distill:
-                    self.load_teacher_actions()
-                    self.replay_buffer._set_teacher_actions(self.teacher_actions)
-
-            self.replay_buffer.set_flag(label=self.cfg.label,distill=self.cfg.distill,mix=self.cfg.mix)
+            # if self.cfg.distill:
+            #     self.load_teacher_actions()
+            #     self.replay_buffer._set_teacher_actions(self.teacher_actions)
+            # else:
+            #     self.teacher_actions = None
+            
+            self.replay_buffer.set_flag(speedup = self.cfg.speedup)
             if self.use_demo_replay:
-                self.demo_replay_buffer.set_flag(label=self.cfg.label,distill=self.cfg.distill,mix=self.cfg.mix)
+                self.demo_replay_buffer.set_flag(speedup = self.cfg.speedup)
 
 
             self.env_factory.load_demos_into_replay(

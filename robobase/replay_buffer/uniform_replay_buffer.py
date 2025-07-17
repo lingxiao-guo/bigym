@@ -116,7 +116,6 @@ def downsample_action_with_labels(action, label, chunk_len):
     current_label = label
     indices = []
     i = -2
-    # 循环时检查索引有效性
     while len(indices) < chunk_len - 2:
         if i + high_v < horizon and np.all(current_label[i:i + high_v] == 1):
             i += high_v
@@ -126,27 +125,24 @@ def downsample_action_with_labels(action, label, chunk_len):
             indices.append(i)
         else:
             i += 1
-        if i >= horizon:  # 超出范围则终止循环
+        if i >= horizon:  
             indices.append(horizon-1)
             break
         
-        
-    # 处理循环后的追加逻辑
-    if indices:  # 确保indices非空
+    if indices: 
         last_i = indices[-1]
-        # 严格检查i+1和i+2的有效性
-        if last_i + 1 < horizon:
-            indices.append(last_i + 1)
         if last_i + 2 < horizon:
             indices.append(last_i + 2)
+        else:
+            indices.append(horizon-1)
+        if last_i + 3 < horizon:
+            indices.append(last_i + 3)
     
     new_actions = current_action[indices]
     return new_actions.astype(np.float32)
 
 def get_mix_actions(teacher_action, action, label):
-    # 将 label 转换为布尔类型的列向量 (n, 1)，方便广播
     mask = label.astype(bool)[:, np.newaxis]
-    # 根据 mask 选择对应的行，True 选 teacher_action，False 选 action
     new_action = np.where(mask, teacher_action, action)
     return new_action
     
@@ -365,9 +361,8 @@ class UniformReplayBuffer(ReplayBuffer):
         self._is_first = True
         self.labels = None
         self.teacher_actions = None
-        self.label_flag = False
-        self.distill_flag = False
-        self.mix_flag = False
+        self.speedup_flag = False
+        
 
     @property
     def frame_stack(self):
@@ -531,10 +526,8 @@ class UniformReplayBuffer(ReplayBuffer):
         self._current_episode = defaultdict(list)
         self._store_episode(episode)
     
-    def set_flag(self,label,distill,mix):
-        self.label_flag = label
-        self.distill_flag = distill
-        self.mix_flag = mix
+    def set_flag(self,speedup):
+        self.speedup_flag = speedup
 
     def _store_episode(self, episode):
         if self._sequential:
@@ -553,9 +546,6 @@ class UniformReplayBuffer(ReplayBuffer):
             assert (eps_len+1) == len(teacher_action)
             episode[TEACHER_ACTION] = teacher_action
         
-        if self.mix_flag:
-            mix_action = get_mix_actions(episode[TEACHER_ACTION],episode[ACTION],episode[LABEL])
-            episode[MIX_ACTION] = mix_action
 
         global_idx = self.add_count - eps_len
         self._num_episodes += 1
@@ -886,19 +876,17 @@ class UniformReplayBuffer(ReplayBuffer):
         action_idxs = list(range(action_start_idx, action_end_idx))
         action_seq = episode[ACTION][action_idxs]
         ################################## ACCELERATE #####################################
-        # constant
-        # action_seq = episode[ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)]
         # distill 
-        if self.distill_flag:
-            # action_seq = episode[TEACHER_ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)] 
-            N = action_end_idx - action_start_idx
-            # action_seq = episode[TEACHER_ACTION][action_idxs]
-            action_seq = np.concatenate([
-                episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][:-2][::2],
-                episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][-2:]
-            ]).astype(np.float32)
+        # if self.speedup_flag:
+        #     # action_seq = episode[TEACHER_ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)] 
+        #     N = action_end_idx - action_start_idx
+        #     # action_seq = episode[TEACHER_ACTION][action_idxs]
+        #     action_seq = np.concatenate([
+        #         episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][:-2][::2],
+        #         episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][-2:]
+        #     ]).astype(np.float32)
         
-        if self.label_flag:
+        if self.speedup_flag:
           label = label[action_start_idx:]
           action_seq =  episode[TEACHER_ACTION][action_start_idx:] 
           action_seq = downsample_action_with_labels(action_seq,label.copy(),self._action_seq_len)
