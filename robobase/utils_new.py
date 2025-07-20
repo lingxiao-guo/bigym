@@ -148,44 +148,44 @@ def remove_outliers_isolation_forest(data, contamination=0.1):
     model = IsolationForest(contamination=contamination)
     predictions = model.fit_predict(data.reshape(-1, 1))
     
-    data = data.copy()  
+    data = data.copy()  # 避免修改原数据
 
-    
-    if predictions[0] == -1:  
+    # 处理首点
+    if predictions[0] == -1:  # 如果首点是离群点
         next_idx = 1
         while next_idx < len(data) and predictions[next_idx] == -1:
             next_idx += 1
-        if next_idx < len(data):  
+        if next_idx < len(data):  # 找到最近的非离群点
             data[0] = data[next_idx]
 
-    
-    if predictions[-1] == -1:  
+    # 处理尾点
+    if predictions[-1] == -1:  # 如果尾点是离群点
         prev_idx = len(data) - 2
         while prev_idx >= 0 and predictions[prev_idx] == -1:
             prev_idx -= 1
-        if prev_idx >= 0:  
+        if prev_idx >= 0:  # 找到最近的非离群点
             data[-1] = data[prev_idx]
 
-    
+    # 处理中间的离群点
     for i in range(1, len(data) - 1):
-        if predictions[i] == -1:  
-            
+        if predictions[i] == -1:  # 如果是离群点
+            # 找到前一个非离群点
             prev_idx = i - 1
             while prev_idx >= 0 and predictions[prev_idx] == -1:
-                prev_idx -= 1 
+                prev_idx -= 1  # 跳过离群点
 
-            
+            # 找到后一个非离群点
             next_idx = i + 1
             while next_idx < len(data) and predictions[next_idx] == -1:
-                next_idx += 1  
+                next_idx += 1  # 跳过离群点
 
-            
+            # 如果能找到前后非离群点，用它们的均值替换
             if prev_idx >= 0 and next_idx < len(data):
                 data[i] = (data[prev_idx] + data[next_idx]) / 2
-            
+            # 如果只能找到前一个非离群点，用前一个非离群点替换
             elif prev_idx >= 0:
                 data[i] = data[prev_idx]
-            
+            # 如果只能找到后一个非离群点，用后一个非离群点替换
             elif next_idx < len(data):
                 data[i] = data[next_idx]
                 
@@ -193,101 +193,290 @@ def remove_outliers_isolation_forest(data, contamination=0.1):
 
 
 
-def hdbscan_with_custom_merge(entropy, dir, rollout_id, plot=True):
-    
+import pandas as pd
+import seaborn as sns
+from matplotlib.colors import ListedColormap
+from matplotlib.collections import LineCollection
+COLOR_SCHEME = {
+    'muted': ('#7fbf7b', '#af8dc3'),      # 莫兰迪风格
+    'earth': ('#4d9221', '#c51b7d'),      # 自然色调（ColorBrewer推荐）
+    'pastel': ('#a6d854', '#fc8d62'),     # 柔和水彩风格
+    'professional': ('#2ca02c', '#d62728') # Tableau经典配色
+}
+def hdbscan_with_custom_merge(entropy, dir, rollout_id, threshold=0,plot=True):
+    """
+    使用HDBSCAN进行初步聚类，并根据规则进一步合并：
+    - 第二个特征值小于0的点合并为一个簇；
+    - 其余点合并为另一个簇；
+    - 离群点 (-1 标签) 不参与合并。
+
+    参数:
+    X (array-like): 输入的数据
+    dir (str): 保存图像的目录路径
+    rollout_id (int): 用于标记图像文件名
+    plot (bool): 是否绘制聚类结果
+
+    返回:
+    labels (array): 合并后的簇标签
+    """
+    # 排除离群点
     entropy = np.array(entropy)
     entropy_norm = (entropy-np.mean(entropy))/np.std(entropy)
- 
+    # entropy_norm[entropy_norm>2] = 0 
     entropy_norm = remove_outliers_isolation_forest(entropy_norm)
     entropy_norm = (entropy_norm-np.mean(entropy_norm))/np.std(entropy_norm)
+    refined_labels = np.zeros_like(entropy_norm, dtype=int)
+    
+    # 找到 entropy_norm 大于 threshold 的位置，并将对应的 label 设置为 1
+    # refined_labels[entropy_norm > 0] = -1
+
+    # refined_labels = get_refined_labels(entropy_norm)
     indices = np.arange(len(entropy_norm))
     indices = (indices-np.mean(indices))/np.std(indices)
     X = np.stack((indices,entropy_norm),axis=-1)
- 
-    clusterer = hdbscan.HDBSCAN(min_cluster_size=5)
+    # 初始化 HDBSCAN
+    clusterer = hdbscan.HDBSCAN(min_cluster_size=3)
     clusterer.fit(X)
- 
+    # TODO: add max_samples constraint
+    # 初步聚类的标签
     initial_labels = clusterer.labels_
 
     
-    def split_large_clusters(labels, data, max_size=25):
+    # 后处理步骤，确保每个簇最多包含25个样本
+    def split_large_clusters(labels, data, max_size=10):
         unique_labels = np.unique(labels)
-        new_label = max(labels) + 1  
+        new_label = max(labels) + 1  # 用于分配新的簇标签
 
         for label in unique_labels:
-            if label == -1:  
+            if label == -1:  # 跳过离群点
                 continue
 
+            # 获取当前簇的索引
             cluster_indices = np.where(labels == label)[0]
             if len(cluster_indices) > max_size:
+                # 如果簇的大小超过max_size，进行拆分
                 cluster_points = data[cluster_indices]
                 
+                # 基于某些策略进行簇的拆分（例如按照距离拆分）
+                # 这里用的是简单的按顺序分割的方法，可以根据需要更改为其他策略
                 num_splits = len(cluster_indices) // max_size + (len(cluster_indices) % max_size > 0)
                 
                 for i in range(num_splits):
                     split_indices = cluster_indices[i * max_size:(i + 1) * max_size]
                     labels[split_indices] = new_label
-                    new_label += 1  
+                    new_label += 1  # 为每个拆分簇分配一个新的标签
 
         return labels
-
+    
+    # 拆分过大的簇
     initial_labels = split_large_clusters(initial_labels, X)
     
-    unique_labels = np.unique(initial_labels[initial_labels >= 0])  
+    # 获取非离群点的唯一标签
+    unique_labels = np.unique(initial_labels[initial_labels >= 0])  # 排除噪声点 (-1)
     
-    refined_labels = np.full_like(initial_labels, -1)  
+    # 初始化合并后的标签
+    refined_labels = np.full_like(initial_labels, -1)  # 默认所有点为离群值
+
+    # 合并规则：
+    # - 第二个特征 < 0 的点分为一类（合并到 0 类）
+    # - 其余点分为另一类（合并到 1 类）
     for label in unique_labels:
+        # 获取当前簇的点
         cluster_points = X[initial_labels == label]
         
-        if  np.mean(cluster_points[:, 1] < 1):
-            refined_labels[initial_labels == label] = 0  
+        # 判断当前簇的第二个特征的值是否全部小于 0
+        if  np.mean(cluster_points[:, 1] < 1.): # 0
+            refined_labels[initial_labels == label] = 0  # 合并到第 0 类
         else:
-            refined_labels[initial_labels == label] = -1  
+            refined_labels[initial_labels == label] = -1  # 合并到第 1 类"""
+    
+    def merge_small_outliers(labels, max_gap=10):
+        # 找到所有离群点位置
+        is_outlier = (labels == -1)
+        diff = np.diff(is_outlier.astype(int))
+         
+        # 获取连续段的起止位置
+        starts = np.where(diff == 1)[0] + 1
+        ends = np.where(diff == -1)[0] + 1
+        
+        # 处理边界情况
+        if is_outlier[0]:
+            starts = np.insert(starts, 0, 0)
+        if is_outlier[-1]:
+            ends = np.append(ends, len(labels))
+            
+        # 生成新标签（从当前最大标签+1开始）
+        current_max = labels.max()
+        new_label = current_max + 1
+        
+        # 遍历所有连续离群段
+        for start, end in zip(starts, ends):
+            segment = slice(start, end)
+            
+            # 检查是否满足合并条件
+            if (end - start) < max_gap:
+                # 检查前后点是否为非离群点
+                prev_valid = start > 0 and labels[start-1] != -1
+                next_valid = end < len(labels) and labels[end] != -1
+                
+                if prev_valid and next_valid:
+                    labels[segment] = new_label
+                    new_label = 0  # 为每个段分配唯一标签
+                    
+        return labels
+
+    # 应用离群点合并策略
+    refined_labels = merge_small_outliers(refined_labels, max_gap=10)
+
+    def calculate_ema(data, window=5):
+        return pd.Series(data).ewm(span=window, adjust=False).mean().values
+
+    # 改进后的可视化函数
+    def plot_colored_ema(ax, time_steps, ema_data, cluster_labels):
+        from matplotlib.collections import LineCollection
+        from matplotlib.colors import ListedColormap
+
+        # 转换标签为0/1（原-1转为1）
+        color_labels = np.where(cluster_labels == 0, 0, 1)
+        
+        # 创建颜色映射（与聚类图保持一致）
+        cmap = ListedColormap(COLOR_SCHEME['professional'])
+        
+        # 创建线段集合
+        points = np.array([time_steps, ema_data]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        
+        # 为每个线段分配颜色
+        lc = LineCollection(segments, cmap=cmap, linewidth=2.5)
+        lc.set_array(color_labels[:-1])  # 使用前n-1个点的颜色决定线段颜色
+        
+        # 添加集合到坐标轴
+        ax.add_collection(lc)
+        
+        # 设置坐标轴范围
+        ax.set_xlim(time_steps.min(), time_steps.max())
+        ax.set_ylim(ema_data.min()-0.1, ema_data.max()+0.1)
+        
+        return lc
 
     if plot:
-        plt.figure(figsize=(10, 6))
-        plt.plot(np.arange(len(entropy_norm)), entropy_norm, marker='o', markersize=5)  
-        plt.title('1D Data Plot')
-        plt.xlabel('Timestep')
-        plt.ylabel('Entropy')
-        plt.grid(True)  
+        # 统一样式设置
+        plt.style.use('classic')
+        plt.rcParams.update({
+            'font.family': 'DejaVu Sans',
+            'axes.titlesize': 13,
+            'axes.labelsize': 11,
+            'axes.facecolor': 'white',     # 坐标区域白底
+            'figure.facecolor': 'white',   # 整体画布白底
+            'grid.color': '#eeeeee',       # 浅灰色网格
+            'grid.linestyle': '--',
+            'grid.alpha': 0.7
+        })
+        # 生成EMA数据
+        time_steps = np.arange(len(entropy_norm))/15  # 假设15Hz采样率
+        ema_data = entropy_norm #calculate_ema(entropy_norm, window=7)
+
+        # 创建EMA可视化图表
+        fig, ax = plt.subplots(figsize=(12, 2.5))
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        
+        ax.yaxis.set_ticks_position('left')  # 只保留左侧Y轴刻度
+        ax.xaxis.set_ticks_position('bottom') # 只保留底部X轴刻度
+        # 添加坐标轴箭头（EMA图）
+        arrow_props = dict(
+            color='#404040',
+            linewidth=1.2,
+            arrowstyle='<-,head_width=0.4,head_length=0.8',
+            zorder=10
+        )
+
+        # X轴右箭头
+        ax.annotate('', 
+                   xy=(1, 0), 
+                   xycoords='axes fraction',
+                   xytext=(1.05, 0),
+                   arrowprops=arrow_props)
+
+        # Y轴上箭头
+        ax.annotate('', 
+                   xy=(0, 1), 
+                   xycoords='axes fraction',
+                   xytext=(0, 1.05),
+                   arrowprops=arrow_props)
+        # 绘制彩色EMA曲线
+        lc = plot_colored_ema(ax, time_steps, ema_data, refined_labels)
+        
+        # 添加颜色条（与聚类结果对应）
+        cbar = plt.colorbar(lc, ax=ax)
+        cbar.set_ticks([0, 1])
+        cbar.set_ticklabels(['Precise', 'Casual'])
+        # cbar.set_label('Behavior Pattern', rotation=270, labelpad=20)
+
+        # 图表装饰
+        # ax.set_title('Entropy curve\n', pad=15)
+        ax.set_xlabel('Time (s)', labelpad=8)
+        ax.set_ylabel('Normalized Entropy', labelpad=8)
+        ax.grid(True, alpha=0.4)
+        
+        
+        # 保存图像
+        plt.tight_layout()
         os.makedirs(os.path.join(dir, "plot"), exist_ok=True)
-        plt.savefig(os.path.join(dir, f"plot/rollout{rollout_id}-entropy-curve.png"))
+        plt.savefig(os.path.join(dir, f"plot/rollout{rollout_id}-colored-ema.png"), 
+                   dpi=300, bbox_inches='tight')
         plt.close()
 
+    # 聚类可视化（保持颜色对应）
     if plot:
-        plt.figure(figsize=(10, 6))
-        plt.scatter(X[:, 0], X[:, 1], c=initial_labels, cmap='viridis', marker='o')
-        plt.title('HDBSCAN Initial Clustering')
-        plt.xlabel('Feature 1')
-        plt.ylabel('Feature 2')
-        plt.colorbar(label='Cluster Label')
-        os.makedirs(os.path.join(dir, "plot"), exist_ok=True)
-        plt.savefig(os.path.join(dir, f"plot/rollout{rollout_id}-hdbscan-raw.png"))
+        # 合并后聚类（匹配EMA颜色方案）
+        fig, ax = plt.subplots(figsize=(10, 8))
+        scatter = ax.scatter(
+            X[:, 0], X[:, 1],
+            c=np.where(refined_labels == 0, 0, 1),  # 统一颜色映射
+            cmap=ListedColormap(['royalblue', 'darkorange']),
+            s=60,
+            alpha=0.8,
+            edgecolors='w'
+        )
+        
+        ax.set_title('Final Behavior Clustering\n', fontsize=13)
+        ax.set_xlabel('Normalized Timestep', fontsize=11)
+        ax.set_ylabel('Normalized Entropy', fontsize=11)
+        
+        cbar = plt.colorbar(scatter, ax=ax)
+        cbar.set_ticks([0, 1])
+        cbar.set_ticklabels(['Stable Phase', 'Active Phase'])
+        cbar.set_label('Pattern Type', rotation=270, labelpad=20)
+        
+        plt.savefig(os.path.join(dir, f"plot/rollout{rollout_id}-final-clusters.png"), 
+                   dpi=300, transparent=True)
         plt.close()
 
-    if plot:
-        plt.figure(figsize=(10, 6))
-        scatter = plt.scatter(X[:, 0], X[:, 1], c=refined_labels, cmap='viridis', marker='o')
-        cbar = plt.colorbar(scatter)
-        cbar.set_label('Refined Cluster Label', rotation=270, labelpad=15)
-        plt.title('HDBSCAN + Custom Merge Clustering')
-        plt.xlabel('Feature 1')
-        plt.ylabel('Feature 2')
-        plt.grid(True)
-        plt.savefig(os.path.join(dir, f"plot/rollout{rollout_id}-hdbscan-refine.png"))
-        plt.close()
+    print('Precision rate:', list(refined_labels).count(0)/len(refined_labels))
     return np.abs(refined_labels)
 
 def gaussian_kernel(x, bandwidth):
-    
+    """
+    计算高斯核函数。
+
+    Args:
+    - x (torch.Tensor): 样本点，形状为 (batch_size, num_samples, dim)
+    - bandwidth (float): 核函数的带宽（标准差）
+
+    Returns:
+    - kernel_values (torch.Tensor): 高斯核的计算值，形状为 (batch_size, num_samples, num_samples)
+    """
     batch_size, num_samples, dim = x.size()
     
+    # 扩展维度以便计算距离矩阵
     x_i = x.unsqueeze(2)  # (batch_size, num_samples, 1, dim)
     x_j = x.unsqueeze(1)  # (batch_size, 1, num_samples, dim)
     
+    # 计算距离矩阵
     distances = torch.sum((x_i - x_j) ** 2, dim=-1)  # (batch_size, num_samples, num_samples)
     
+    # 计算高斯核
     kernel_values = torch.exp(-distances / (2 * bandwidth ** 2))
     
     return kernel_values
