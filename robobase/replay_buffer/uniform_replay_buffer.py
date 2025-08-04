@@ -146,7 +146,7 @@ def downsample_action_with_labels(action, label, chunk_len):
             indices.append(horizon-1)
         # if indices == [0,1,2]:
         #     indices = [0,1]
-
+ 
     new_actions = current_action[indices]
     return new_actions.astype(np.float32), indices
 
