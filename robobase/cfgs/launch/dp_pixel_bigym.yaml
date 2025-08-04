@@ -43,10 +43,10 @@ mix: False
 
 wandb:  # weight and bias
   use: true
-  project: dp_bigym_qz20
+  project: dp_bigym
   name: act_bigym_${env.task_name}_label_${label}_distill_${distill}_seq_${action_sequence}
 
 
 hydra:
   run:
-    dir: ./exp_local/pixel_dp/bigym_${env.task_name}_DDPM_seed_${seed}_label_${label}_distill_${distill}_seq_${action_sequence}
+    dir: ./exp_local/pixel_dp/bigym_${env.task_name}_DDPM_seed_${seed}_label_${label}_distill_${distill}_seq_${action_sequence}_24_0.5v

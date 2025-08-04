@@ -89,6 +89,8 @@ def _create_default_envs(cfg: DictConfig) -> EnvFactory:
         from robobase.envs.bigym import BiGymEnvFactory
 
         factory = BiGymEnvFactory()
+        if cfg.distill:
+            factory.HIGH_GAIN = True
     elif cfg.env.env_name == "d4rl":
         from robobase.envs.d4rl import D4RLEnvFactory
 
@@ -109,7 +111,10 @@ class Workspace:
         env_factory: EnvFactory = None,
         create_replay_fn: Callable[[DictConfig], ReplayBuffer] = None,
         work_dir: str = None,
-    ):
+    ):  
+        if cfg.distill:
+            cfg.action_sequence = cfg.action_sequence//2
+            cfg.execution_length = cfg.execution_length//2
         if env_factory is None:
             env_factory = _create_default_envs(cfg)
         if create_replay_fn is None:

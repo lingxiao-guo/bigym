@@ -62,52 +62,52 @@ def load_episode(fn: Path):
         episode = {k: episode[k] for k in episode.keys()}
         return episode
 
-def downsample_action_with_labels(action, label, chunk_len):
-    low_v = 2
-    high_v = 4
-    middle_v = (low_v+high_v)//2
+# def downsample_action_with_labels(action, label, chunk_len):
+#     low_v = 2
+#     high_v = 4
+#     middle_v = (low_v+high_v)//2
     
-    horizon, dim = action.shape
-    indices = []
-    i = 0  # 修正初始索引为0
+#     horizon, dim = action.shape
+#     indices = []
+#     i = 0  # 修正初始索引为0
     
-    while i < horizon:
-        if label[i] == 0:
-            # 低速模式：直接采样并移动1步
-            indices.append(i)
-            i += low_v
-        else:
-            # 进入高速区域：动态计算最佳步长
-            start = i
-            # 计算连续高速区域的长度
-            while i < horizon and label[i] == 1:
-                i += 1
-            seg_length = i - start
+#     while i < horizon:
+#         if label[i] == 0:
+#             # 低速模式：直接采样并移动1步
+#             indices.append(i)
+#             i += low_v
+#         else:
+#             # 进入高速区域：动态计算最佳步长
+#             start = i
+#             # 计算连续高速区域的长度
+#             while i < horizon and label[i] == 1:
+#                 i += 1
+#             seg_length = i - start
             
-            # 动态分段处理（含过渡逻辑）
-            ptr = start
-            while ptr < start + seg_length:
-                remaining = start + seg_length - ptr
+#             # 动态分段处理（含过渡逻辑）
+#             ptr = start
+#             while ptr < start + seg_length:
+#                 remaining = start + seg_length - ptr
                 
-                # 速度过渡策略（可根据需要调整系数）
-                if ptr == start and start > 0 and label[start-1] == 0:
-                    # 过渡区开始：使用中等速度
-                    step = min(middle_v, remaining)
-                elif remaining >= high_v:
-                    # 稳定高速区：使用标准高速步长
-                    step = high_v
-                else:
-                    # 尾部处理：使用剩余最大可能步长
-                    step = max(1, min(remaining, high_v-1))
+#                 # 速度过渡策略（可根据需要调整系数）
+#                 if ptr == start and start > 0 and label[start-1] == 0:
+#                     # 过渡区开始：使用中等速度
+#                     step = min(middle_v, remaining)
+#                 elif remaining >= high_v:
+#                     # 稳定高速区：使用标准高速步长
+#                     step = high_v
+#                 else:
+#                     # 尾部处理：使用剩余最大可能步长
+#                     step = max(1, min(remaining, high_v-1))
                 
-                indices.append(ptr)
-                ptr += step
+#                 indices.append(ptr)
+#                 ptr += step
     
-    new_actions = action[indices]
+#     new_actions = action[indices]
     
-    return new_actions
+#     return new_actions
 
-'''
+
 def downsample_action_with_labels(action, label, chunk_len):
     low_v = 2
     high_v = 4
@@ -116,8 +116,10 @@ def downsample_action_with_labels(action, label, chunk_len):
     current_label = label
     indices = []
     i = -2
-    # 循环时检查索引有效性
-    while len(indices) < chunk_len - 2:
+    if horizon <= 2:
+        return action[:0], indices
+    
+    while len(indices) < chunk_len - 2 and i < horizon:
         if i + high_v < horizon and np.all(current_label[i:i + high_v] == 1):
             i += high_v
             indices.append(i)
@@ -126,23 +128,29 @@ def downsample_action_with_labels(action, label, chunk_len):
             indices.append(i)
         else:
             i += 1
-        if i >= horizon:  # 超出范围则终止循环
-            indices.append(horizon-1)
-            break
         
-        
-    # 处理循环后的追加逻辑
-    if indices:  # 确保indices非空
-        last_i = indices[-1]
-        # 严格检查i+1和i+2的有效性
-        if last_i + 1 < horizon:
-            indices.append(last_i + 1)
-        if last_i + 2 < horizon:
-            indices.append(last_i + 2)
     
+    if indices:  
+        last_i = indices[-1]
+        # process for boundary
+        if last_i + 3 < horizon:
+            indices.append(last_i + 2)
+            indices.append(last_i + 3)
+        elif last_i + 2 < horizon:
+            indices.append(last_i + 1)
+            indices.append(last_i + 2)
+        elif last_i + 1 < horizon:
+            indices.append(last_i + 1)
+        elif last_i + 1 == horizon:
+            indices[-1] = horizon - 2
+            indices.append(horizon-1)
+        # if indices == [0,1,2]:
+        #     indices = [0,1]
+
     new_actions = current_action[indices]
-    return new_actions
-'''
+    return new_actions.astype(np.float32), indices
+
+
 def get_mix_actions(teacher_action, action, label):
     # 将 label 转换为布尔类型的列向量 (n, 1)，方便广播
     mask = label.astype(bool)[:, np.newaxis]
@@ -889,9 +897,9 @@ class UniformReplayBuffer(ReplayBuffer):
         # constant
         # action_seq = episode[ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)]
         # distill 
+        N = action_end_idx - action_start_idx
         if self.distill_flag:
             # action_seq = episode[TEACHER_ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)] 
-            N = action_end_idx - action_start_idx
             # action_seq = episode[TEACHER_ACTION][action_idxs]
             action_seq = np.concatenate([
                 episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][:-2][::2],
@@ -901,8 +909,40 @@ class UniformReplayBuffer(ReplayBuffer):
         if self.label_flag:
           label = label[action_start_idx:]
           action_seq =  episode[TEACHER_ACTION][action_start_idx:] 
-          action_seq = downsample_action_with_labels(action_seq,label.copy(),self._action_seq_len)
-        # - Pad zeros to the end if action_sequences exceeds eps_len
+          action_seq, indices = downsample_action_with_labels(action_seq,label.copy(),self._action_seq_len)
+          action_seq_dd = np.concatenate([
+                episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][:-2][::2],
+                episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][-2:]
+            ]).astype(np.float32)
+        #   if not (len(action_seq) == len(action_seq_dd)):
+        #     print(indices)
+        #     L = len(episode[TEACHER_ACTION][action_start_idx:])
+        #     all_idx = np.arange(L)
+
+        #     # 2. 对照你的切片逻辑
+        #     first_part  = all_idx[:2*N-2]    # [:2*N-2]
+        #     first_part2 = first_part[:-2]    # [:-2]
+        #     prefix_idx  = first_part2[::2]   # [::2]
+
+        #     suffix_idx  = all_idx[:2*N-2][-2:]  # [:(2*N-2)][-2:]
+        #     concat_idx = np.concatenate([prefix_idx, suffix_idx])
+        #     print("all indices used in action_seq_dd     =", concat_idx)
+        #   if not (action_seq == action_seq_dd).all():
+        #     print(indices)
+        #     L = len(episode[TEACHER_ACTION][action_start_idx:])
+        #     all_idx = np.arange(L)
+
+        #     # 2. 对照你的切片逻辑
+        #     first_part  = all_idx[:2*N-2]    # [:2*N-2]
+        #     first_part2 = first_part[:-2]    # [:-2]
+        #     prefix_idx  = first_part2[::2]   # [::2]
+
+        #     suffix_idx  = all_idx[:2*N-2][-2:]  # [:(2*N-2)][-2:]
+        #     concat_idx = np.concatenate([prefix_idx, suffix_idx])
+        #     print("all indices used in action_seq_dd     =", concat_idx)
+        #   assert (action_seq == action_seq_dd).all()
+          action_seq = action_seq.astype(np.float32)
+         # - Pad zeros to the end if action_sequences exceeds eps_len
         if len(action_seq) < self._action_seq_len:
             num_action_to_pad = self._action_seq_len - len(action_seq)
             action_seq = np.concatenate(

@@ -61,6 +61,7 @@ def _task_name_to_env_class(task_name: str) -> type[BiGymEnv]:
 
 
 class BiGymEnvFactory(EnvFactory):
+    HIGH_GAIN=False
     def _wrap_env(self, env, cfg, demo_env=False, train=True, return_raw_spaces=False):
         # last two are grippers
         assert cfg.demos != 0
@@ -154,6 +155,7 @@ class BiGymEnvFactory(EnvFactory):
                 privileged_information=False if cfg.pixels else True,
             ),
             control_frequency=CONTROL_FREQUENCY_MAX // cfg.env.demo_down_sample_rate,
+            high_gain = self.HIGH_GAIN,
         )
 
     def make_train_env(self, cfg: DictConfig) -> gym.vector.VectorEnv:
@@ -208,7 +210,6 @@ class BiGymEnvFactory(EnvFactory):
 
     def collect_or_fetch_demos(self, cfg: DictConfig, num_demos: int):
         demos = self._get_demo_fn(cfg, num_demos)
-        # demos = self.transform_base_action_to_abs(demos)
         self._raw_demos = demos
         self._action_stats = self._compute_action_stats(cfg, demos)
         self._obs_stats = self._compute_obs_stats(cfg, demos)
