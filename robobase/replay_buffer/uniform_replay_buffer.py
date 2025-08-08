@@ -144,20 +144,13 @@ def downsample_action_with_labels(action, label, chunk_len):
         elif last_i + 1 == horizon:
             indices[-1] = horizon - 2
             indices.append(horizon-1)
-        # if indices == [0,1,2]:
-        #     indices = [0,1]
+        
  
     new_actions = current_action[indices]
     return new_actions.astype(np.float32), indices
 
 
-def get_mix_actions(teacher_action, action, label):
-    # 将 label 转换为布尔类型的列向量 (n, 1)，方便广播
-    mask = label.astype(bool)[:, np.newaxis]
-    # 根据 mask 选择对应的行，True 选 teacher_action，False 选 action
-    new_action = np.where(mask, teacher_action, action)
-    return new_action
-    
+
 
 class UniformReplayBuffer(ReplayBuffer):
     """A simple out-of-graph Replay Buffer.
@@ -373,9 +366,7 @@ class UniformReplayBuffer(ReplayBuffer):
         self._is_first = True
         self.labels = None
         self.teacher_actions = None
-        self.label_flag = False
-        self.distill_flag = False
-        self.mix_flag = False
+        self.speedup = False
 
     @property
     def frame_stack(self):
@@ -539,10 +530,8 @@ class UniformReplayBuffer(ReplayBuffer):
         self._current_episode = defaultdict(list)
         self._store_episode(episode)
     
-    def set_flag(self,label,distill,mix):
-        self.label_flag = label
-        self.distill_flag = distill
-        self.mix_flag = mix
+    def set_flag(self,speedup):
+        self.speedup = speedup
 
     def _store_episode(self, episode):
         if self._sequential:
@@ -561,10 +550,7 @@ class UniformReplayBuffer(ReplayBuffer):
             assert (eps_len+1) == len(teacher_action)
             episode[TEACHER_ACTION] = teacher_action
         
-        if self.mix_flag:
-            mix_action = get_mix_actions(episode[TEACHER_ACTION],episode[ACTION],episode[LABEL])
-            episode[MIX_ACTION] = mix_action
-
+        
         global_idx = self.add_count - eps_len
         self._num_episodes += 1
         self._num_transitions += eps_len
@@ -898,49 +884,11 @@ class UniformReplayBuffer(ReplayBuffer):
         # action_seq = episode[ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)]
         # distill 
         N = action_end_idx - action_start_idx
-        if self.distill_flag:
-            # action_seq = episode[TEACHER_ACTION][action_start_idx:][::2][:(action_end_idx-action_start_idx)] 
-            # action_seq = episode[TEACHER_ACTION][action_idxs]
-            action_seq = np.concatenate([
-                episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][:-2][::2],
-                episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][-2:]
-            ]).astype(np.float32)
         
-        if self.label_flag:
+        if self.speedup:
           label = label[action_start_idx:]
           action_seq =  episode[TEACHER_ACTION][action_start_idx:] 
           action_seq, indices = downsample_action_with_labels(action_seq,label.copy(),self._action_seq_len)
-          action_seq_dd = np.concatenate([
-                episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][:-2][::2],
-                episode[TEACHER_ACTION][action_start_idx:][:(2*N-2)][-2:]
-            ]).astype(np.float32)
-        #   if not (len(action_seq) == len(action_seq_dd)):
-        #     print(indices)
-        #     L = len(episode[TEACHER_ACTION][action_start_idx:])
-        #     all_idx = np.arange(L)
-
-        #     # 2. 对照你的切片逻辑
-        #     first_part  = all_idx[:2*N-2]    # [:2*N-2]
-        #     first_part2 = first_part[:-2]    # [:-2]
-        #     prefix_idx  = first_part2[::2]   # [::2]
-
-        #     suffix_idx  = all_idx[:2*N-2][-2:]  # [:(2*N-2)][-2:]
-        #     concat_idx = np.concatenate([prefix_idx, suffix_idx])
-        #     print("all indices used in action_seq_dd     =", concat_idx)
-        #   if not (action_seq == action_seq_dd).all():
-        #     print(indices)
-        #     L = len(episode[TEACHER_ACTION][action_start_idx:])
-        #     all_idx = np.arange(L)
-
-        #     # 2. 对照你的切片逻辑
-        #     first_part  = all_idx[:2*N-2]    # [:2*N-2]
-        #     first_part2 = first_part[:-2]    # [:-2]
-        #     prefix_idx  = first_part2[::2]   # [::2]
-
-        #     suffix_idx  = all_idx[:2*N-2][-2:]  # [:(2*N-2)][-2:]
-        #     concat_idx = np.concatenate([prefix_idx, suffix_idx])
-        #     print("all indices used in action_seq_dd     =", concat_idx)
-        #   assert (action_seq == action_seq_dd).all()
           action_seq = action_seq.astype(np.float32)
          # - Pad zeros to the end if action_sequences exceeds eps_len
         if len(action_seq) < self._action_seq_len:

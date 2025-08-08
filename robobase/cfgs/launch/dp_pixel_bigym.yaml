@@ -37,16 +37,14 @@ seed: 1
 replay:
   nstep: 1
 
-label: False
-distill: False
-mix: False
+speedup: false
 
 wandb:  # weight and bias
   use: true
   project: dp_bigym
-  name: act_bigym_${env.task_name}_label_${label}_distill_${distill}_seq_${action_sequence}
+  name: dp_bigym_${env.task_name}_speedup_${speedup}
 
 
 hydra:
   run:
-    dir: ./exp_local/pixel_dp/bigym_${env.task_name}_DDPM_seed_${seed}_label_${label}_distill_${distill}_seq_${action_sequence}_24_0.5v
+    dir: ./exp_local/pixel_dp/bigym_${env.task_name}_speedup_${speedup}

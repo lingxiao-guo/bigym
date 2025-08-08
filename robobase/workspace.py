@@ -89,7 +89,7 @@ def _create_default_envs(cfg: DictConfig) -> EnvFactory:
         from robobase.envs.bigym import BiGymEnvFactory
 
         factory = BiGymEnvFactory()
-        if cfg.distill:
+        if cfg.speedup:
             factory.HIGH_GAIN = True
     elif cfg.env.env_name == "d4rl":
         from robobase.envs.d4rl import D4RLEnvFactory
@@ -112,7 +112,7 @@ class Workspace:
         create_replay_fn: Callable[[DictConfig], ReplayBuffer] = None,
         work_dir: str = None,
     ):  
-        if cfg.distill:
+        if cfg.speedup:
             cfg.action_sequence = cfg.action_sequence//2
             cfg.execution_length = cfg.execution_length//2
         if env_factory is None:
@@ -684,27 +684,18 @@ class Workspace:
     def _load_demos(self):
         if (num_demos := self.cfg.demos) != 0:
             # NOTE: Currently we do not protect demos from being evicted from replay
-            if self.cfg.label:
+            if self.cfg.speedup:
+                self.load_teacher_actions()
+                self.replay_buffer._set_teacher_actions(self.teacher_actions)
                 self.load_labels()
                 self.replay_buffer._set_labels(self.labels)
             else:
-                self.labels = None
-            if self.cfg.distill:
-                self.load_teacher_actions()
-                self.replay_buffer._set_teacher_actions(self.teacher_actions)
-            else:
                 self.teacher_actions = None
-            if self.cfg.mix:
-                if not self.cfg.label:
-                    self.load_labels()
-                    self.replay_buffer._set_labels(self.labels)
-                if not self.cfg.distill:
-                    self.load_teacher_actions()
-                    self.replay_buffer._set_teacher_actions(self.teacher_actions)
-
-            self.replay_buffer.set_flag(label=self.cfg.label,distill=self.cfg.distill,mix=self.cfg.mix)
+                self.labels = None
+            
+            self.replay_buffer.set_flag(speedup=self.cfg.speedup)
             if self.use_demo_replay:
-                self.demo_replay_buffer.set_flag(label=self.cfg.label,distill=self.cfg.distill,mix=self.cfg.mix)
+                self.demo_replay_buffer.set_flag(speedup=self.cfg.speedup)
 
 
             self.env_factory.load_demos_into_replay(
