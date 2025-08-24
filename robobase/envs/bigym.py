@@ -225,14 +225,14 @@ class BiGymEnvFactory(EnvFactory):
         import matplotlib.pyplot as plt      
         qpos = np.array(qpos)
         target_qpos = np.array(target_qpos)
-        num_dims = qpos.shape[1]  # 获取维度数量
-        timestep = qpos.shape[0]  # 获取时间步数
-        # print(self.action_data.shape)
-        cols = 4  # 每行 4 个子图
-        rows = (num_dims + cols - 1) // cols  # 自动计算行数
+        num_dims = qpos.shape[1]  
+        timestep = qpos.shape[0]  
+        
+        cols = 4  
+        rows = (num_dims + cols - 1) // cols  
 
         fig, axes = plt.subplots(rows, cols, figsize=(cols * 4, rows * 4)) 
-        axes = axes.flatten()  # 将 2D 子图数组展平成 1D
+        axes = axes.flatten()  
         
         for i in range(num_dims):
             axes[i].plot(range(timestep), qpos[:, i], label=f"real qpos {i+1}")
@@ -242,11 +242,10 @@ class BiGymEnvFactory(EnvFactory):
             axes[i].set_ylabel("Value")
             axes[i].legend()
         
-        # 隐藏多余的子图（如果子图数量大于16）
         for j in range(num_dims, len(axes)):
             axes[j].axis("off")
         
-        plt.tight_layout()  # 自动调整子图间距
+        plt.tight_layout()  
         if work_dir is not None:
             save_dir = work_dir/f'plot'
             save_dir.mkdir(parents=True, exist_ok=True) 
@@ -254,21 +253,6 @@ class BiGymEnvFactory(EnvFactory):
             fig.savefig(save_path)
         plt.close(fig)
         
-    def transform_base_action_to_abs(self, demos): #先从demos里画一个曲线验证一下
-        transformed_demos = []
-        print('Transform base action to abs action...')
-        for demo in tqdm(demos):
-            action_list = [timestep.info['demo_action'] for timestep in demo.timesteps]
-            action_data = np.array(action_list)
-            base_obs = [timestep.observation['proprioception_floating_base'] for timestep in demo.timesteps]
-            base_obs = np.array(base_obs)
-            D = base_obs.shape[-1]
-            action_data[:,:D] = np.cumsum(action_data[:,:D],axis=0) + base_obs[0]
-            for t in range(len(demo.timesteps)):
-                demo.timesteps[t].info['demo_action'] = action_data[t] 
-            transformed_demos.append(demo)
-        del demos
-        return transformed_demos
         
     def load_demos_into_replay(self, cfg: DictConfig, buffer, is_demo_buffer, labels = None):
         """See base class for documentation."""
@@ -371,25 +355,20 @@ class BiGymEnvFactory(EnvFactory):
             for step in demo.timesteps:
                 obs.append(step.observation)
         
-        # 获取观察值的键
         keys = obs[0].keys()
         
-        # 使用 PyTorch 处理数据
         obs_torch = {key: torch.stack([torch.tensor(o[key]) for o in obs], dim=0) for key in keys}
-        
-        # 计算均值、标准差、最大值和最小值
+
         obs_mean = {key: torch.mean(obs_torch[key], dim=0) for key in keys}
         obs_std = {key: torch.std(obs_torch[key], dim=0) for key in keys}
         obs_min = {key: torch.min(obs_torch[key], dim=0).values for key in keys}
         obs_max = {key: torch.max(obs_torch[key], dim=0).values for key in keys}
         
-        # 将 PyTorch 张量转换为 NumPy 数组
         obs_mean_np = {key: value.numpy() for key, value in obs_mean.items()}
         obs_std_np = {key: value.numpy() for key, value in obs_std.items()}
         obs_min_np = {key: value.numpy() for key, value in obs_min.items()}
         obs_max_np = {key: value.numpy() for key, value in obs_max.items()}
         
-        # 返回统计结果
         obs_stats = {
             "mean": obs_mean_np,
             "std": obs_std_np,

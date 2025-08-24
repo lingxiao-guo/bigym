@@ -277,8 +277,8 @@ class Workspace:
         self._shutting_down = False
 
         self.best_metrics = {
-            "best_episode_success": 0,  # 默认值为 0
-            "best_episode_len": 0,  # 默认值为 0
+            "best_episode_success": 0,  
+            "best_episode_len": 0,  
         }
 
     @property
@@ -417,32 +417,28 @@ class Workspace:
         self.agent.set_eval_env_running(False)
         avg_length = np.mean(episode_len) if len(episode_len)>0 else np.inf
         new_metrics = {
-            "episode_success": successes / episode,  # 默认值为 0
-            "episode_len": avg_length,  # 默认值为 0
+            "episode_success": successes / episode,  
+            "episode_len": avg_length,  
         }
         if self.best_metrics['best_episode_success'] <= (successes / episode):
             self.best_metrics = {
-                "best_episode_success": successes / episode,  # 默认值为 0
-                "best_episode_len": avg_length,  # 默认值为 0
+                "best_episode_success": successes / episode,  
+                "best_episode_len": avg_length, 
             }
             self.save_snapshot(best_ckpt = True)
 
         
         print("Success rate: ",successes / episode,"episode_length: ", avg_length )
         print("Best success rate:",self.best_metrics["best_episode_success"],"best episode_length",self.best_metrics["best_episode_len"])
-        # 1. 检查文件是否存在
         file_path = self.work_dir /'metrics.txt'
         if os.path.exists(file_path):
-        #     # 2. 如果文件存在，先读取文件内容
             with open(file_path, 'r') as f:
-                existing_data = json.load(f)  # 读取现有的 JSON 数据
+                existing_data = json.load(f)  
         else:
-            existing_data = []  # 如果文件不存在，创建一个空列表
+            existing_data = [] 
 
-        # 3. 将新的 metrics 数据追加到现有内容
         existing_data.append(new_metrics)
         existing_data.append(self.best_metrics)
-        # 4. 写入文件（追加）
         with open(file_path, 'w') as f:
             json.dump(existing_data, f, indent=4)
         return metrics
@@ -547,7 +543,8 @@ class Workspace:
             self.eval_video_recorder.save_labeled_demo(demo_frames, f"label-{episode}.mp4")
             # TODO: calculate labels from entropy; store entropy & label in the dataset
             episode += 1
-        print('Precision rate:',np.sum(precision_len)/np.sum(episode_len))
+        print("Label complete")
+        exit()
     
     def save_data(self, data, file_path, file_name):
         if not file_name.endswith('.npy'):

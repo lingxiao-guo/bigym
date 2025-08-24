@@ -34,15 +34,13 @@ seed: 1
 replay:
   nstep: 1
 
-label: False
-distill: False
-mix: False
+speedup: false
 
 wandb:
-  name: act_bigym_${env.task_name}_label_${label}_distill_${distill}_seq_${action_sequence}
+  name: act_bigym_${env.task_name}_speedup_${speedup}
 
 
 hydra:
   run:
-    dir: ./exp_local/pixel_act/bigym_${env.task_name}_seed_${seed}_seq_${action_sequence}_label_${label}_distill_${distill}_mix_${mix}
+    dir: ./exp_local/pixel_act/bigym_${env.task_name}_speedup_${speedup}_0813
 

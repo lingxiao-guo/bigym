@@ -62,55 +62,11 @@ def load_episode(fn: Path):
         episode = {k: episode[k] for k in episode.keys()}
         return episode
 
-# def downsample_action_with_labels(action, label, chunk_len):
-#     low_v = 2
-#     high_v = 4
-#     middle_v = (low_v+high_v)//2
-    
-#     horizon, dim = action.shape
-#     indices = []
-#     i = 0  # 修正初始索引为0
-    
-#     while i < horizon:
-#         if label[i] == 0:
-#             # 低速模式：直接采样并移动1步
-#             indices.append(i)
-#             i += low_v
-#         else:
-#             # 进入高速区域：动态计算最佳步长
-#             start = i
-#             # 计算连续高速区域的长度
-#             while i < horizon and label[i] == 1:
-#                 i += 1
-#             seg_length = i - start
-            
-#             # 动态分段处理（含过渡逻辑）
-#             ptr = start
-#             while ptr < start + seg_length:
-#                 remaining = start + seg_length - ptr
-                
-#                 # 速度过渡策略（可根据需要调整系数）
-#                 if ptr == start and start > 0 and label[start-1] == 0:
-#                     # 过渡区开始：使用中等速度
-#                     step = min(middle_v, remaining)
-#                 elif remaining >= high_v:
-#                     # 稳定高速区：使用标准高速步长
-#                     step = high_v
-#                 else:
-#                     # 尾部处理：使用剩余最大可能步长
-#                     step = max(1, min(remaining, high_v-1))
-                
-#                 indices.append(ptr)
-#                 ptr += step
-    
-#     new_actions = action[indices]
-    
-#     return new_actions
 
 
 def downsample_action_with_labels(action, label, chunk_len):
     low_v = 2
-    high_v = 4
+    high_v = 2
     horizon, dim = action.shape
     current_action = action
     current_label = label

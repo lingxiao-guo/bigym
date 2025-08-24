@@ -355,7 +355,7 @@ class ActBCAgent(BC):
                 extract_from_spec(obs, "low_dim_state")
             )
             qpos = qpos.detach()
-            qpos[:, 30:60] = 0 # mask qvel
+            # qpos[:, 30:60] = 0 # mask qvel
 
         if self.use_pixels:
             rgb = flatten_time_dim_into_channel_dim(
@@ -375,7 +375,7 @@ class ActBCAgent(BC):
                 extract_from_spec(obs, "low_dim_state").unsqueeze(0)
             )
             qpos = qpos.detach()
-            qpos[:, 30:60] = 0 # mask qvel
+            # qpos[:, 30:60] = 0 # mask qvel
 
         if self.use_pixels:
             rgb = flatten_time_dim_into_channel_dim(
@@ -417,7 +417,7 @@ class ActBCAgent(BC):
                 extract_from_batch(batch, "low_dim_state")
             )
             qpos = obs.detach()
-            qpos[:, 30:60] = 0 # mask qvel
+            # qpos[:, 30:60] = 0 # mask qvel
             
 
         rgb = flatten_time_dim_into_channel_dim(
